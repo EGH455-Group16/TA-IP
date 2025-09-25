@@ -180,36 +180,29 @@ def bbox_center(bbox):
     cx = (x_min + x_max) / 2
     cy = (y_min + y_max) / 2
     return (cx, cy)
-def gauge_reading(center, tip, min_val=0, max_val=10, theta_min=-120, theta_max=120):
+def gauge_reading(center, tip, min_val=0, max_val=10, theta_min=225, theta_max=315):
     """
     Calculate gauge reading based on detected needle points.
-
-    Args:
-        center: (x, y) of needle center
-        tip: (x, y) of needle tip
-        min_val: minimum gauge value (e.g., 0 bar)
-        max_val: maximum gauge value (e.g., 10 bar)
-        theta_min: angle at min_val (deg)
-        theta_max: angle at max_val (deg)
     """
+
     dx = tip[0] - center[0]
     dy = tip[1] - center[1]
 
-    # atan2 gives angle relative to +x axis, counter-clockwise
-    angle = math.degrees(math.atan2(-dy, dx))  
+    # Get angle in degrees (Desmos-style atan2)
+    t1 = math.degrees(math.atan2(-dy, dx))  
 
-    # Normalize to [0, 360)
-    angle = (angle + 360) % 360
+    # Match Desmos: transform to gauge-relative angle
+    t2 = -t1 + 225
+    if t2 >= 360:
+        t2 -= 360
+    
+    # Map to gauge value (0 to 10 over 270°)
+    value = (t2 / 270) * 10
 
-    # Map angle to gauge range
-    value = min_val + (angle - theta_min) / (theta_max - theta_min) * (max_val - min_val)
-
-    # Clamp
-    value = max(min_val, min(max_val, value))
-    return value, angle
+    print(f"Gauge reading: {value:.2f} bar (angle {t2:.1f}°)")
+    return value, t1
 
 # ARUCO CODE:
-
 aruco_dict_type = ARUCO_DICT["DICT_5X5_100"]
 calibration_matrix_path = ".\calibration_matrix.npy"
 distortion_coefficients_path = ".\distortion_coefficients.npy"
@@ -295,11 +288,11 @@ with dai.Device(pipeline) as device:
                                 tip = points["Tip"]
                                 tail = points["Tail"]
                                 
-                                reading, angle = gauge_reading(tail, tip,
+                                reading, angle = gauge_reading(center, tip,
                                     min_val=0, max_val=10, 
-                                    theta_min=225, theta_max=315
+                                    theta_min=270, theta_max=0
                                 )
-                    #print(f"Gauge reading: {reading:.2f} bar (angle {angle:.1f}°)")
+                                #print(f"Gauge reading: {reading:.2f} bar (angle {angle:.1f}°)")
                     #send_detection("gauge", details, frame)
 
                 elif label == "ARUCO":
