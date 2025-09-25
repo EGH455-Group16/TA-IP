@@ -104,7 +104,7 @@ def update_gauge(center, tip, tail):
     reading_tt, angle_tt = gauge_reading(tail, tip) # tip to tail readings
     reading_ct, angle_ct = gauge_reading(center, tip) # center to tip readings
     reading_tc, angle_tc = gauge_reading(tail, center) # tail to center readings
-
+    print(f"RAW Readings: {reading_tt:.2f}, {reading_ct:.2f}, {reading_tc:.2f}")
     # append to deque
     readings.append(reading_tt)
     readings.append(reading_ct)
@@ -113,8 +113,8 @@ def update_gauge(center, tip, tail):
     angles.append(angle_tt)
     angles.append(angle_ct)
     angles.append(angle_tc)
-
-    return np.average(readings), np.average(angles) # send averages
+    
+    return np.median(readings), np.median(angles) # send 
 
     
 
@@ -223,7 +223,7 @@ def gauge_reading(center, tip, min_val=0, max_val=10, theta_min=225, theta_max=3
     # Map to gauge value (0 to 10 over 270°)
     value = (t2 / 270) * 10
 
-    print(f"Gauge reading: {value:.2f} bar (angle {t2:.1f}°)")
+    #print(f"Gauge reading: {value:.2f} bar (angle {t2:.1f}°)")
     return value, t1
 
 # ARUCO CODE:
@@ -312,10 +312,20 @@ with dai.Device(pipeline) as device:
                                 tip = points["Tip"]
                                 tail = points["Tail"]
                                 
-                                reading, angle = gauge_reading(center, tip,
-                                    min_val=0, max_val=10, 
-                                    theta_min=270, theta_max=0
-                                )
+                                # reading, angle = gauge_reading(center, tip,
+                                #     min_val=0, max_val=10, 
+                                #     theta_min=270, theta_max=0
+                                # )
+                                reading, angle = update_gauge(center, tip, tail)
+                                print(f"Avg reading: {reading:.2f} bar (angle {angle:.1f}°)")
+                                details = {
+                                    "id": "guage",
+                                    "reading_bar": round(reading, 2),
+                                    "confidence": round(det.confidence, 2),
+                                    "bbox": bbox.tolist()
+                                }
+                                
+                                #send_detection("gauge", details, frame)
 
                                 
                                 #print(f"Gauge reading: {reading:.2f} bar (angle {angle:.1f}°)")
