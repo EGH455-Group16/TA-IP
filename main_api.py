@@ -16,6 +16,7 @@ import blobconverter
 import requests, datetime, os
 from utils import ARUCO_DICT
 import math
+from collections import deque
 SERVER_URL = "http://100.77.144.85:5001/api/target-data"   # replace <server-ip>
 FRAME_PATH = "/static/frame.jpg"                        # or ./static/frame.jpg
 
@@ -93,6 +94,29 @@ detectionNetwork.setIouThreshold(iouThreshold)
 detectionNetwork.setBlobPath(nnPath)
 detectionNetwork.setNumInferenceThreads(2)
 detectionNetwork.input.setBlocking(False)
+
+# deque to handle auto popping, change len for larger moving avg
+readings = deque(maxlen=30)  # 10 sample window
+angles   = deque(maxlen=30)
+
+def update_gauge(center, tip, tail):
+
+    reading_tt, angle_tt = gauge_reading(tail, tip) # tip to tail readings
+    reading_ct, angle_ct = gauge_reading(center, tip) # center to tip readings
+    reading_tc, angle_tc = gauge_reading(tail, center) # tail to center readings
+
+    # append to deque
+    readings.append(reading_tt)
+    readings.append(reading_ct)
+    readings.append(reading_tc)
+
+    angles.append(angle_tt)
+    angles.append(angle_ct)
+    angles.append(angle_tc)
+
+    return np.average(readings), np.average(angles) # send averages
+
+    
 
 # Linking
 camRgb.preview.link(detectionNetwork.input)
@@ -292,6 +316,8 @@ with dai.Device(pipeline) as device:
                                     min_val=0, max_val=10, 
                                     theta_min=270, theta_max=0
                                 )
+
+                                
                                 #print(f"Gauge reading: {reading:.2f} bar (angle {angle:.1f}°)")
                     #send_detection("gauge", details, frame)
 
