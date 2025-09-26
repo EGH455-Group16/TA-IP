@@ -16,9 +16,194 @@ import blobconverter
 import requests, datetime, os
 from utils import ARUCO_DICT
 import math
+import socket
+import requests
 from collections import deque
 from gpiozero import Servo
 from time import sleep
+from datetime import datetime, timezone
+import threading,queue
+from PIL import Image, ImageDraw, ImageFont, ImageOps
+import st7735
+from smbus2 import SMBus
+from bme280 import BME280
+from enviroplus import gas
+from ltr559 import LTR559
+
+
+# -------------------- Sensor Code --------------------
+ltr559 = LTR559()
+SERVER_URL_SENSORS = "http://10.88.60.164:5001/api/sensors"
+LCD_ROTATION = 270
+LCD_SPI_SPEED_HZ = 4000000
+LCD_FPS = 15
+API_KEY = None
+
+# shared state
+state = {
+    "ip" : " 0.0.0.0",
+    "air_c": 0.0,
+    "cpu_c": 0.0,
+}
+state_lock = threading.Lock()
+
+# Init LCD
+
+lcd = st7735.ST7735(
+    port=0,
+    cs=1,
+    dc="GPIO9",
+    backlight="GPIO12",
+    rotation=LCD_ROTATION,
+    spi_speed_hz=LCD_SPI_SPEED_HZ
+)
+lcd.begin()
+LCD_W,LCD_H = lcd.width, lcd.height
+font = ImageFont.load_default()
+
+# Init sensors
+
+# Values for MX + B straight line from datasheet
+red_m = -0.867 # log(0.01)- log(4) / log(1000) - log(1) using CO line
+ox_m = 1.015 #  log(0.05) -log(42) / log(0.03) - log(6.5) using NO2 line
+nh3_m = -0.567 # log(0.045) - log(0.8) / log(160) - log(1) using NH3 line
+
+# Values are from calibration data
+red_R0 = 435816.37
+ox_R0 = 6081.13
+nh3_R0 = 220543.21
+
+# Y intercepts for the lines
+red_b = 0.602 # log(4) - m*log(1)
+ox_b = 0.797 # log(0.3) - m*log(0.05)
+nh3_b = -0.097 # log(0.8) - m*log(1)
+
+def get_ip_address():
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.connect(("8.8.8.8", 80))
+        ip_address = s.getsockname()[0]
+        s.close()
+        
+    except Exception as e:
+        print("Error getting IP address:", e)
+        return None
+    return ip_address
+
+def read_cpu_temp():
+    try:
+        with open("/sys/class/thermal/thermal_zone0/temp", "r") as f:
+            temp_str = f.read()
+            temp_c = float(temp_str) / 1000.0
+    except Exception as e:
+        return 0.0
+    return temp_c
+
+def post_json(payload):
+    headers = {"Content-Type": "application/json"}
+    if API_KEY:
+        headers["x-api-key"] = API_KEY
+    r = requests.post(SERVER_URL_SENSORS, headers=headers, data=json.dumps(payload), timeout=5)
+    r.raise_for_status()
+
+def calculate_ppm(rs, r0, m, b):
+    if rs <= 0 or r0 <= 0:
+        return 0.0
+    ratio = rs / r0
+    # Rearrange formula to calculate ppm from rs/r0
+    log_ppm = (math.log10(ratio) - b) / m
+    ppm = 10 ** log_ppm
+    return ppm
+
+def read_lux():
+    lux = ltr559.get_lux()
+    if lux is None or lux < 0:
+        return 0.0
+    return float(lux)
+
+bus = SMBus(1)
+bme280 = BME280(i2c_dev=bus)
+
+# ---------------- Sensor thread --------------------
+def sensor_post_loop():
+    
+    ip = get_ip_address()
+    with state_lock:
+        state["ip"] = ip
+
+    while True:
+        try:
+            g = gas.read_all()
+
+            # Get readings
+
+            red_RS = g.reducing
+            ox_RS = g.oxidising
+            nh3_RS = g.nh3
+
+            # Calculate PPM
+
+            ppm_CO = calculate_ppm(red_RS, red_R0, red_m, red_b)
+            ppm_NO2 = calculate_ppm(ox_RS, ox_R0, ox_m, ox_b)
+            ppm_NH3 = calculate_ppm(nh3_RS, nh3_R0, nh3_m, nh3_b)
+
+            # Get light level
+            lux = read_lux()
+
+            # Get temperature, pressure, humidity
+            temperature = float(bme280.get_temperature())
+            pressure = float(bme280.get_pressure())
+            humidity = float(bme280.get_humidity())
+
+            # Update LCD display
+            cpu_c = read_cpu_temp()
+            with state_lock:
+                state["air_c"] = temperature
+                state["cpu_c"] = cpu_c
+            payload = {
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "co_ppm": ppm_CO,
+                "no2_ppm": ppm_NO2,
+                "nh3_ppm": ppm_NH3,
+                "light_lux": lux,
+                "temp_c": temperature,
+                "pressure_hpa": pressure,
+                "humidity_pct": humidity,
+            }
+            post_json(payload)
+        except Exception:
+            # Dont crash, just try again in a second
+            pass
+        time.sleep(1.0)
+
+# ---------------- Display thread --------------------
+
+def display_loop():
+        while True:
+            try:
+                frame = lcd_queue.get(timeout=1.0)
+            except queue.Empty:
+                continue
+            pil = Image.fromarray(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
+            pil = ImageOps.fit(pil, (LCD_W, LCD_H), Image.BILINEAR)
+            draw = ImageDraw.Draw(pil)
+            with state_lock:
+                ip = state["ip"]
+                air_c = state["air_c"]
+                cpu_c = state["cpu_c"]
+            draw.rectangle((0,0,LCD_W,14), fill =(0,0,0))
+            draw.text((2, 2), f"IP:{ip}", font=font, fill=(255,255,255))
+            draw.rectangle((0,LCD_H-14,LCD_W,LCD_H), fill =(0,0,0))
+            draw.text((2, LCD_H-12), f"Air:{air_c:.1f}C CPU:{cpu_c:.1f}C", font=font, fill=(255,255,255))
+            lcd.display(pil)
+# Start threads
+lcd_queue = queue.Queue(maxsize=3)
+threading.Thread(target=sensor_post_loop, daemon=True).start()
+threading.Thread(target=display_loop, daemon=True).start()
+
+
+# -------------------- End Sensor Code -------------------
+
 SERVER_URL = "http://10.88.60.164:5001/api/target-data"   # replace <server-ip>
 FRAME_PATH = "/static/frame.jpg"                        # or ./static/frame.jpg
 
@@ -308,6 +493,11 @@ with dai.Device(pipeline) as device:
             counter += 1
         
         if frame is not None:
+
+            try:
+                lcd_queue.put_nowait(frame.copy())
+            except queue.Full:
+                pass
             # Draw bboxes for human operator
             
             displayFrame("rgb", frame, detections)
