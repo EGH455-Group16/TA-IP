@@ -257,8 +257,8 @@ def gauge_reading(center, tip, min_val=0, max_val=10, theta_min=225, theta_max=3
 
 # ARUCO CODE:
 aruco_dict_type = ARUCO_DICT["DICT_5X5_100"]
-calibration_matrix_path = ".\calibration_matrix.npy"
-distortion_coefficients_path = ".\distortion_coefficients.npy"
+calibration_matrix_path = "./calibration_matrix.npy"
+distortion_coefficients_path = "./distortion_coefficients.npy"
 
 k = np.load(calibration_matrix_path)
 d = np.load(distortion_coefficients_path)
@@ -363,9 +363,9 @@ with dai.Device(pipeline) as device:
                                     send_detection("gauge", details, frame)
 
                                     if reading < 2.0 and motor_flag == 0:
-                                        rotate_servo(1.0, True)
+                                        rotate_servo(10.0, True)
                                         sleep(0.5)
-                                        rotate_servo(1.0, False)
+                                        rotate_servo(10.0, False)
                                         motor_flag = 1
                                     #print(f"Gauge reading: {reading:.2f} bar (angle {angle:.1f}°)")
 
