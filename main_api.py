@@ -17,7 +17,9 @@ import requests, datetime, os
 from utils import ARUCO_DICT
 import math
 from collections import deque
-SERVER_URL = "http://100.77.144.85:5001/api/target-data"   # replace <server-ip>
+from gpiozero import Servo
+from time import sleep
+SERVER_URL = "http://10.88.60.164:5001/api/target-data"   # replace <server-ip>
 FRAME_PATH = "/static/frame.jpg"                        # or ./static/frame.jpg
 
 # parse arguments
@@ -27,6 +29,7 @@ parser.add_argument("-m", "--model", help="Provide model name or model path for 
 parser.add_argument("-c", "--config", help="Provide config path for inference",
                     default='json/yolov4-tiny.json', type=str)
 args = parser.parse_args()
+motor_flag = 0
 
 # parse config
 configPath = Path(args.config)
@@ -98,13 +101,31 @@ detectionNetwork.input.setBlocking(False)
 # deque to handle auto popping, change len for larger moving avg
 readings = deque(maxlen=30)  # 10 sample window
 angles   = deque(maxlen=30)
+MOTOR_HEADER2_GPIO_PIN = 13
+
+def rotate_servo(seconds: float, clockwise: bool = True) -> None:
+    servo = Servo(
+        MOTOR_HEADER2_GPIO_PIN,
+        frame_width=0.02,        # 50 Hz
+        min_pulse_width=0.0010,  # 1.0 ms
+        max_pulse_width=0.0020   # 2.0 ms
+    )
+    try:
+        if clockwise:
+            servo.max()   # run one direction
+        else:
+            servo.min()   # run the other direction
+        sleep(seconds)    # KEEP PWM ON for the whole duration
+        servo.mid()       # stop
+    finally:
+        servo.close()
 
 def update_gauge(center, tip, tail):
 
     reading_tt, angle_tt = gauge_reading(tail, tip) # tip to tail readings
     reading_ct, angle_ct = gauge_reading(center, tip) # center to tip readings
     reading_tc, angle_tc = gauge_reading(tail, center) # tail to center readings
-    print(f"RAW Readings: {reading_tt:.2f}, {reading_ct:.2f}, {reading_tc:.2f}")
+    #print(f"RAW Readings: {reading_tt:.2f}, {reading_ct:.2f}, {reading_tc:.2f}")
     # append to deque
     readings.append(reading_tt)
     readings.append(reading_ct)
@@ -173,7 +194,7 @@ def test_sensor_api_valid_data():
     try:
         # Best way: requests sets Content-Type automatically
         resp = requests.post(
-            "http://192.168.1.156:5001/api/sensors",
+            "http://10.88.60.164:5001/api/sensors",
             json=payload
         )
         print("Status:", resp.status_code)
@@ -182,23 +203,31 @@ def test_sensor_api_valid_data():
         print("POST failed:", e)
 
 def send_detection(target_type, details, frame):
-    
-    # Save the annotated frame
-    cv2.imwrite(FRAME_PATH, frame)
-    image_url = f"http://192.168.1.156:5001/frame.jpg"     # served via Flask/static
+    # Encode frame as JPEG in memory, not saving to disk here.
+    _, buffer = cv2.imencode(".jpg", frame)
 
-    payload = {
+    # Put image bytes in the "file" field
+    files = {
+        "file": ("frame.jpg", buffer.tobytes(), "image/jpeg")
+    }
+
+    data = {
         "ts": datetime.datetime.now().isoformat(),
         "target_type": target_type,
-        "details": details,
-        "image_url": image_url
+        "details": json.dumps(details)
     }
     try:
-        resp = requests.post("http://192.168.1.156:5001/api/targets", json=payload, timeout=1)
+        resp = requests.post(
+            "http://10.88.60.164:5000/api/targets",
+            files=files,
+            data=data,
+            timeout=1
+        )
         print("Status:", resp.status_code)
         print("Response:", resp.json())
     except Exception as e:
-        print("POST failed:", e)
+        print("POST failed::", e)
+
 def bbox_center(bbox):
     x_min, y_min, x_max, y_max = bbox
     cx = (x_min + x_max) / 2
@@ -224,7 +253,7 @@ def gauge_reading(center, tip, min_val=0, max_val=10, theta_min=225, theta_max=3
     value = (t2 / 270) * 10
 
     #print(f"Gauge reading: {value:.2f} bar (angle {t2:.1f}°)")
-    return value, t1
+    return value, t2
 
 # ARUCO CODE:
 aruco_dict_type = ARUCO_DICT["DICT_5X5_100"]
@@ -277,73 +306,84 @@ with dai.Device(pipeline) as device:
         if inDet is not None:
             detections = inDet.detections
             counter += 1
-
+        
         if frame is not None:
             # Draw bboxes for human operator
             
             displayFrame("rgb", frame, detections)
+            if not detections:
+                detail= {
+                    "id": "livedata",
+                }
+                send_detection("livedata", detail, frame)
+            else:
+                # Send detections to server
+                for det in detections:
+                    bbox = frameNorm(frame, (det.xmin, det.ymin, det.xmax, det.ymax))
+                    label = labels[det.label]
+                    
+                    if label in ["open-valve", "closed-valve"]:
+                        #displayFrame("rgb", output, detections)
 
-
-            # Send detections to server
-            for det in detections:
-                bbox = frameNorm(frame, (det.xmin, det.ymin, det.xmax, det.ymax))
-                label = labels[det.label]
-                
-                if label in ["open-valve", "closed-valve"]:
-                    details = {
-                        "state": "open" if "open" in label else "closed",
-                        "confidence": round(det.confidence, 2),
-                        "bbox": bbox.tolist()
-                    }
-                    #send_detection("valve", details, frame)
-                elif label == "Gauge":
-                    for det in detections:
-                        bbox = frameNorm(frame, (det.xmin, det.ymin, det.xmax, det.ymax))
-                        label = labels[det.label]
-                        if label in ["Center", "Tip", "Tail"]:
-                            points[label] = bbox_center(bbox.tolist())
-                        
-                        if labels != "Gauge":
-                            if (points["Center"] != (0,0) and
-                                points["Tip"] != (0,0) and
-                                points["Tail"] != (0,0)):
-
-                                center = points["Center"]
-                                tip = points["Tip"]
-                                tail = points["Tail"]
-                                
-                                # reading, angle = gauge_reading(center, tip,
-                                #     min_val=0, max_val=10, 
-                                #     theta_min=270, theta_max=0
-                                # )
-                                reading, angle = update_gauge(center, tip, tail)
-                                print(f"Avg reading: {reading:.2f} bar (angle {angle:.1f}°)")
-                                details = {
-                                    "id": "guage",
-                                    "reading_bar": round(reading, 2),
-                                    "confidence": round(det.confidence, 2),
-                                    "bbox": bbox.tolist()
-                                }
-                                
-                                #send_detection("gauge", details, frame)
-
-                                
-                                #print(f"Gauge reading: {reading:.2f} bar (angle {angle:.1f}°)")
-                    #send_detection("gauge", details, frame)
-
-                elif label == "ARUCO":
-                    output, marker_id, pose = pose_estimation(frame, aruco_dict_type, k, d)
-                    displayFrame("rgb", output, detections)
-                    if marker_id is not None:
                         details = {
-                            "id": marker_id,
-                            "pose": pose,
+                            "state": "open" if "open" in label else "closed",
                             "confidence": round(det.confidence, 2),
                             "bbox": bbox.tolist()
                         }
-                    print(f"[Pose] ID={marker_id}, position={pose}")
+                        send_detection("valve", details, frame)
+                    elif label == "Gauge":
+                        for det in detections:
+                            #displayFrame("rgb", output, detections)
+                            label = labels[det.label]
+                            if label in ["Center", "Tip", "Tail"]:
+                                points[label] = bbox_center(bbox.tolist())
+                            
+                            if labels != "Gauge":
+                                if (points["Center"] != (0,0) and
+                                    points["Tip"] != (0,0) and
+                                    points["Tail"] != (0,0)):
 
-                    #send_detection("aruco", details, frame)
+                                    center = points["Center"]
+                                    tip = points["Tip"]
+                                    tail = points["Tail"]
+                                    
+                                    # reading, angle = gauge_reading(center, tip,
+                                    #     min_val=0, max_val=10, 
+                                    #     theta_min=270, theta_max=0
+                                    # )
+                                    reading, angle = update_gauge(center, tip, tail)
+                                    #print(f"Avg reading: {reading:.2f} bar (angle {angle:.1f}°)")
+                                    details = {
+                                        "id": "guage",
+                                        "reading_bar": round(reading, 2),
+                                        "confidence": round(det.confidence, 2),
+                                        "bbox": bbox.tolist()
+                                    }
+                                    
+                                    send_detection("gauge", details, frame)
+
+                                    if reading < 2.0 and motor_flag == 0:
+                                        rotate_servo(1.0, True)
+                                        sleep(0.5)
+                                        rotate_servo(1.0, False)
+                                        motor_flag = 1
+                                    #print(f"Gauge reading: {reading:.2f} bar (angle {angle:.1f}°)")
+
+                    elif label == "ARUCO":
+                        output, marker_id, pose = pose_estimation(frame, aruco_dict_type, k, d)
+                        #displayFrame("rgb", output, detections)
+                        if marker_id is not None:
+                            details = {
+                                "id": marker_id,
+                                "pose": pose,
+                                "confidence": round(det.confidence, 2),
+                                "bbox": bbox.tolist()
+                            }
+                            send_detection("aruco", details, frame)
+                            #print(f"[Pose] ID={marker_id}, position={pose}")
+                    
+
+                    
 
 
         if cv2.waitKey(1) == ord('q'):

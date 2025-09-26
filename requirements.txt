@@ -2,3 +2,4 @@ opencv-python
 depthai~=2.19
 depthai-sdk>=1.9.1.1
 numpy>=1.18.5
+gpiozero
