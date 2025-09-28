@@ -12,6 +12,7 @@ import numpy as np
 import time
 import argparse
 import json
+import datetime
 import blobconverter
 import requests, datetime, os
 from utils import ARUCO_DICT
@@ -21,7 +22,6 @@ import requests
 from collections import deque
 from gpiozero import Servo
 from time import sleep
-from datetime import datetime, timezone
 import threading,queue
 from PIL import Image, ImageDraw, ImageFont, ImageOps
 import st7735
@@ -33,7 +33,7 @@ from ltr559 import LTR559
 
 # -------------------- Sensor Code --------------------
 ltr559 = LTR559()
-SERVER_URL_SENSORS = "http://10.88.60.164:5001/api/sensors"
+SERVER_URL_SENSORS = "http://192.168.1.237:5000"
 LCD_ROTATION = 270
 LCD_SPI_SPEED_HZ = 4000000
 LCD_FPS = 15
@@ -103,7 +103,7 @@ def post_json(payload):
     headers = {"Content-Type": "application/json"}
     if API_KEY:
         headers["x-api-key"] = API_KEY
-    r = requests.post(SERVER_URL_SENSORS, headers=headers, data=json.dumps(payload), timeout=5)
+    r = requests.post("http://192.168.1.237/api/sensors", headers=headers, data=json.dumps(payload), timeout=5)
     r.raise_for_status()
 
 def calculate_ppm(rs, r0, m, b):
@@ -403,13 +403,13 @@ def send_detection(target_type, details, frame):
     }
     try:
         resp = requests.post(
-            "http://10.88.60.164:5000/api/targets",
+            "http://192.168.1.237:5000/api/targets",
             files=files,
             data=data,
             timeout=1
         )
-        print("Status:", resp.status_code)
-        print("Response:", resp.json())
+        #print("Status:", resp.status_code)
+        #print("Response:", resp.json())
     except Exception as e:
         print("POST failed::", e)
 
@@ -434,10 +434,10 @@ def gauge_reading(center, tip, min_val=0, max_val=10, theta_min=225, theta_max=3
     if t2 >= 360:
         t2 -= 360
     
-    # Map to gauge value (0 to 10 over 270°)
+    # Map to gauge value (0 to 10 over 270Â°)
     value = (t2 / 270) * 10
 
-    #print(f"Gauge reading: {value:.2f} bar (angle {t2:.1f}°)")
+    #print(f"Gauge reading: {value:.2f} bar (angle {t2:.1f}Â°)")
     return value, t2
 
 # ARUCO CODE:
@@ -533,6 +533,7 @@ with dai.Device(pipeline) as device:
                     elif label == "Gauge":
                         for det in detections:
                             #displayFrame("rgb", output, detections)
+                            bbox = frameNorm(frame, (det.xmin, det.ymin, det.xmax, det.ymax))
                             label = labels[det.label]
                             if label in ["Center", "Tip", "Tail"]:
                                 points[label] = bbox_center(bbox.tolist())
@@ -551,7 +552,7 @@ with dai.Device(pipeline) as device:
                                     #     theta_min=270, theta_max=0
                                     # )
                                     reading, angle = update_gauge(center, tip, tail)
-                                    #print(f"Avg reading: {reading:.2f} bar (angle {angle:.1f}°)")
+                                    #print(f"Avg reading: {reading:.2f} bar (angle {angle:.1f}Â°)")
                                     details = {
                                         "id": "guage",
                                         "reading_bar": round(reading, 2),
@@ -562,11 +563,11 @@ with dai.Device(pipeline) as device:
                                     send_detection("gauge", details, frame)
 
                                     if reading < 2.0 and motor_flag == 0:
-                                        rotate_servo(10.0, True)
-                                        sleep(0.5)
-                                        rotate_servo(10.0, False)
+                                        #rotate_servo(10.0, True)
+                                        #sleep(0.5)
+                                        #rotate_servo(10.0, False)
                                         motor_flag = 1
-                                    #print(f"Gauge reading: {reading:.2f} bar (angle {angle:.1f}°)")
+                                    #print(f"Gauge reading: {reading:.2f} bar (angle {angle:.1f}Â°)")
 
                     elif label == "ARUCO":
                         output, marker_id, pose = pose_estimation(frame, aruco_dict_type, k, d)
