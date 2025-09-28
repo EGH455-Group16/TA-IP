@@ -493,11 +493,19 @@ with dai.Device(pipeline) as device:
             counter += 1
         
         if frame is not None:
+            for detection in detections:
+            bbox = frameNorm(frame, (detection.xmin, detection.ymin, detection.xmax, detection.ymax))
+            cv2.putText(frame, labels[detection.label], (bbox[0] + 10, bbox[1] + 20),
+                        cv2.FONT_HERSHEY_TRIPLEX, 0.5, (255, 0, 0))
+            cv2.putText(frame, f"{int(detection.confidence * 100)}%", (bbox[0] + 10, bbox[1] + 40),
+                        cv2.FONT_HERSHEY_TRIPLEX, 0.5, (255, 0, 0))
+            cv2.rectangle(frame, (bbox[0], bbox[1]), (bbox[2], bbox[3]), (255, 0, 0), 2)
 
             try:
                 lcd_queue.put_nowait(frame.copy())
             except queue.Full:
                 pass
+            
             # Draw bboxes for human operator
             
             displayFrame("rgb", frame, detections)
