@@ -30,6 +30,9 @@ from bme280 import BME280
 from enviroplus import gas
 from ltr559 import LTR559
 
+# -------------------- Global Variables --------------------
+SERVER_URL = "http://192.168.1.237:5000 # replace
+
 
 # -------------------- Sensor Code --------------------
 ltr559 = LTR559()
@@ -103,7 +106,7 @@ def post_json(payload):
     headers = {"Content-Type": "application/json"}
     if API_KEY:
         headers["x-api-key"] = API_KEY
-    r = requests.post("http://192.168.1.237/api/sensors", headers=headers, data=json.dumps(payload), timeout=5)
+    r = requests.post(SERVER_URL + "/api/sensors", headers=headers, data=json.dumps(payload), timeout=5)
     r.raise_for_status()
 
 def calculate_ppm(rs, r0, m, b):
@@ -174,7 +177,7 @@ def sensor_post_loop():
         except Exception:
             # Dont crash, just try again in a second
             pass
-        time.sleep(1.0)
+        #time.sleep(1.0) why is this here?
 
 # ---------------- Display thread --------------------
 
@@ -203,9 +206,6 @@ threading.Thread(target=display_loop, daemon=True).start()
 
 
 # -------------------- End Sensor Code -------------------
-
-SERVER_URL = "http://10.88.60.164:5001/api/target-data"   # replace <server-ip>
-FRAME_PATH = "/static/frame.jpg"                        # or ./static/frame.jpg
 
 # parse arguments
 parser = argparse.ArgumentParser()
@@ -363,29 +363,6 @@ def pose_estimation(frame, aruco_dict_type, matrix_coefficients, distortion_coef
         #print(f"[Pose] ID={marker_id}, rvec={pose['rvec']}, tvec={pose['tvec']}")
 
     return frame, marker_id, pose
-def test_sensor_api_valid_data():
-    """Test sensor API with valid data"""
-    payload = {
-        "timestamp": "2025-01-15T10:30:00Z",
-        "co_ppm": 1.5,
-        "no2_ppm": 0.8,
-        "nh3_ppm": 0.3,
-        "light_lux": 500,
-        "temp_c": 22.5,
-        "pressure_hpa": 1013.25,
-        "humidity_pct": 60.0,
-        "source": "ur_gay"
-    }
-    try:
-        # Best way: requests sets Content-Type automatically
-        resp = requests.post(
-            "http://10.88.60.164:5001/api/sensors",
-            json=payload
-        )
-        print("Status:", resp.status_code)
-        print("Response:", resp.json())
-    except Exception as e:
-        print("POST failed:", e)
 
 def send_detection(target_type, details, frame):
     # Encode frame as JPEG in memory, not saving to disk here.
@@ -403,7 +380,7 @@ def send_detection(target_type, details, frame):
     }
     try:
         resp = requests.post(
-            "http://192.168.1.237:5000/api/targets",
+            SERVER_URL + "/api/targets",
             files=files,
             data=data,
             timeout=1
