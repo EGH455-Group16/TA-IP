@@ -23,6 +23,7 @@ from collections import deque
 from gpiozero import Servo
 from time import sleep
 import threading,queue
+import time
 from PIL import Image, ImageDraw, ImageFont, ImageOps
 import st7735
 from smbus2 import SMBus
@@ -49,6 +50,10 @@ state = {
     "cpu_c": 0.0,
 }
 state_lock = threading.Lock()
+
+# Motor threading primitives
+motor_queue = queue.Queue(maxsize=1)   # only one command at a time
+motor_busy = threading.Event()         # indicates motor is running
 
 # Init LCD
 
@@ -179,6 +184,24 @@ def sensor_post_loop():
             pass
         #time.sleep(1.0) why is this here?
 
+# ---------------- Motor thread --------------------
+
+def _motor_worker():
+    while True:
+        cmd = motor_queue.get()  # blocks until a command arrives
+        try:
+            motor_busy.set()
+            if cmd == "gauge_correction":
+                # original blocking sequence, moved off the main thread
+                rotate_servo(10.0, True)
+                time.sleep(0.5)
+                rotate_servo(10.0, False)
+        except Exception as e:
+            print(f"[motor] error: {e}")
+        finally:
+            motor_busy.clear()
+            motor_queue.task_done()
+
 # ---------------- Display thread --------------------
 
 def display_loop():
@@ -194,8 +217,14 @@ def display_loop():
                 ip = state["ip"]
                 air_c = state["air_c"]
                 cpu_c = state["cpu_c"]
+            
+            # Motor status
+            running = motor_busy.is_set()
+            motor_text = "MOTOR: RUNNING" if running else "MOTOR: IDLE"
+            
             draw.rectangle((0,0,LCD_W,14), fill =(0,0,0))
             draw.text((2, 2), f"IP:{ip}", font=font, fill=(255,255,255))
+            draw.text((2, 16), motor_text, font=font, fill=(255,255,0))
             draw.rectangle((0,LCD_H-14,LCD_W,LCD_H), fill =(0,0,0))
             draw.text((2, LCD_H-12), f"Air:{air_c:.1f}C CPU:{cpu_c:.1f}C", font=font, fill=(255,255,255))
             lcd.display(pil)
@@ -203,6 +232,7 @@ def display_loop():
 lcd_queue = queue.Queue(maxsize=3)
 threading.Thread(target=sensor_post_loop, daemon=True).start()
 threading.Thread(target=display_loop, daemon=True).start()
+threading.Thread(target=_motor_worker, daemon=True).start()
 
 
 # -------------------- End Sensor Code -------------------
@@ -214,7 +244,6 @@ parser.add_argument("-m", "--model", help="Provide model name or model path for 
 parser.add_argument("-c", "--config", help="Provide config path for inference",
                     default='json/yolov4-tiny.json', type=str)
 args = parser.parse_args()
-motor_flag = 0
 
 # parse config
 configPath = Path(args.config)
@@ -539,11 +568,10 @@ with dai.Device(pipeline) as device:
                                     
                                     send_detection("gauge", details, frame)
 
-                                    if reading < 2.0 and motor_flag == 0:
-                                        rotate_servo(10.0, True)
-                                        sleep(0.5)
-                                        rotate_servo(10.0, False)
-                                        motor_flag = 1
+                                    if reading < 2.0 and not motor_busy.is_set():
+                                        # Enqueue once, non-blocking; display & sensors keep running
+                                        if motor_queue.empty():
+                                            motor_queue.put("gauge_correction")
                                     #print(f"Gauge reading: {reading:.2f} bar (angle {angle:.1f}Â°)")
 
                     elif label == "ARUCO":
