@@ -57,7 +57,7 @@ motor_busy = threading.Event()         # indicates motor is running
 motor_gate_lock = threading.Lock()     # atomic gating for enqueue
 motor_last_completion = 0.0            # timestamp of last sequence completion
 MOTOR_COOLDOWN_SECONDS = 30.0          # cooldown period after completion
-
+motor_flag = 0                         # flag to indicate motor operation
 # Init LCD
 
 lcd = st7735.ST7735(
@@ -601,7 +601,7 @@ with dai.Device(pipeline) as device:
                                     
                                     send_detection("gauge", details, frame)
 
-                                    if reading < 2.0:
+                                    if reading < 2.0 and motor_flag = 0:
                                         # Atomic gating: check and enqueue in single locked block
                                         with motor_gate_lock:
                                             now = time.time()
@@ -621,6 +621,7 @@ with dai.Device(pipeline) as device:
                                                 else:
                                                     remaining = MOTOR_COOLDOWN_SECONDS - (now - motor_last_completion)
                                                     print(f"[motor] Command rejected - cooldown active ({remaining:.1f}s remaining)")
+                                        motor_flag = 1  # set flag to indicate motor operation
                                     #print(f"Gauge reading: {reading:.2f} bar (angle {angle:.1f}Â°)")
 
                     elif label == "ARUCO":
