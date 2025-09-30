@@ -19,6 +19,9 @@ import math
 from collections import deque
 from gpiozero import Servo
 from time import sleep
+import threading
+import time
+from queue import Queue
 SERVER_URL = "http://10.88.60.164:5001/api/target-data"   # replace <server-ip>
 FRAME_PATH = "/static/frame.jpg"                        # or ./static/frame.jpg
 
@@ -29,7 +32,6 @@ parser.add_argument("-m", "--model", help="Provide model name or model path for 
 parser.add_argument("-c", "--config", help="Provide config path for inference",
                     default='json/yolov4-tiny.json', type=str)
 args = parser.parse_args()
-motor_flag = 0
 
 # parse config
 configPath = Path(args.config)
@@ -103,6 +105,10 @@ readings = deque(maxlen=30)  # 10 sample window
 angles   = deque(maxlen=30)
 MOTOR_HEADER2_GPIO_PIN = 13
 
+# Motor control threading
+motor_queue = Queue()
+motor_busy = threading.Event()   # prevents parallel motor runs
+
 def rotate_servo(seconds: float, clockwise: bool = True) -> None:
     servo = Servo(
         MOTOR_HEADER2_GPIO_PIN,
@@ -119,6 +125,21 @@ def rotate_servo(seconds: float, clockwise: bool = True) -> None:
         servo.mid()       # stop
     finally:
         servo.close()
+
+def motor_worker():
+    """Worker thread for motor operations"""
+    while True:
+        cmd = motor_queue.get()  # blocks until a command arrives
+        try:
+            if cmd == "rotate_sequence":
+                motor_busy.set()
+                rotate_servo(10.0, True)
+                time.sleep(0.5)
+                rotate_servo(10.0, False)
+            # add future commands here
+        finally:
+            motor_busy.clear()
+            motor_queue.task_done()
 
 def update_gauge(center, tip, tail):
 
@@ -264,6 +285,11 @@ k = np.load(calibration_matrix_path)
 d = np.load(distortion_coefficients_path)
 
 points = {"Center": (0,0), "Tip": (0,0), "Tail": (0,0)}
+
+# Start motor worker thread
+_motor_thread = threading.Thread(target=motor_worker, daemon=True)
+_motor_thread.start()
+
 # Connect to device and start pipeline
 with dai.Device(pipeline) as device:
 
@@ -362,11 +388,10 @@ with dai.Device(pipeline) as device:
                                     
                                     send_detection("gauge", details, frame)
 
-                                    if reading < 2.0 and motor_flag == 0:
-                                        rotate_servo(10.0, True)
-                                        sleep(0.5)
-                                        rotate_servo(10.0, False)
-                                        motor_flag = 1
+                                    if reading < 2.0 and not motor_busy.is_set():
+                                        # queue the work and continue; display/sensors keep running
+                                        if motor_queue.empty():
+                                            motor_queue.put("rotate_sequence")
                                     #print(f"Gauge reading: {reading:.2f} bar (angle {angle:.1f}°)")
 
                     elif label == "ARUCO":
