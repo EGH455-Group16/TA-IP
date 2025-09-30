@@ -54,6 +54,9 @@ state_lock = threading.Lock()
 # Motor threading primitives
 motor_queue = queue.Queue(maxsize=1)   # only one command at a time
 motor_busy = threading.Event()         # indicates motor is running
+motor_gate_lock = threading.Lock()     # atomic gating for enqueue
+motor_last_completion = 0.0            # timestamp of last sequence completion
+MOTOR_COOLDOWN_SECONDS = 30.0          # cooldown period after completion
 
 # Init LCD
 
@@ -189,17 +192,37 @@ def sensor_post_loop():
 def _motor_worker():
     while True:
         cmd = motor_queue.get()  # blocks until a command arrives
+        motor_busy.set()  # Set immediately after dequeuing
+        print(f"[motor] Sequence started - command: {cmd}")
         try:
-            motor_busy.set()
             if cmd == "gauge_correction":
-                # original blocking sequence, moved off the main thread
+                # Extend phase
+                print("[motor] Extend phase: start")
+                start_time = time.time()
                 rotate_servo(10.0, True)
+                elapsed = time.time() - start_time
+                print(f"[motor] Extend phase: end (elapsed {elapsed:.1f}s)")
+                
+                # Pause phase
+                print("[motor] Pause phase: 0.5s")
                 time.sleep(0.5)
+                
+                # Retract phase
+                print("[motor] Retract phase: start")
+                start_time = time.time()
                 rotate_servo(10.0, False)
+                elapsed = time.time() - start_time
+                print(f"[motor] Retract phase: end (elapsed {elapsed:.1f}s)")
+                
+                print("[motor] Sequence completed successfully")
         except Exception as e:
-            print(f"[motor] error: {e}")
+            print(f"[motor] Sequence error: {e}")
         finally:
+            # Guaranteed final stop
+            _force_motor_stop()
             motor_busy.clear()
+            motor_last_completion = time.time()
+            print(f"[motor] Cooldown active until {motor_last_completion + MOTOR_COOLDOWN_SECONDS:.1f}")
             motor_queue.task_done()
 
 # ---------------- Display thread --------------------
@@ -333,6 +356,16 @@ def rotate_servo(seconds: float, clockwise: bool = True) -> None:
         servo.mid()       # stop
     finally:
         servo.close()
+
+def _force_motor_stop():
+    """Force motor to stop completely - called on any error or completion"""
+    try:
+        servo = Servo(MOTOR_HEADER2_GPIO_PIN)
+        servo.mid()  # Neutral position
+        servo.close()  # Release GPIO
+        print("[motor] Force stop completed")
+    except Exception as e:
+        print(f"[motor] Force stop error: {e}")
 
 def update_gauge(center, tip, tail):
 
@@ -568,10 +601,26 @@ with dai.Device(pipeline) as device:
                                     
                                     send_detection("gauge", details, frame)
 
-                                    if reading < 2.0 and not motor_busy.is_set():
-                                        # Enqueue once, non-blocking; display & sensors keep running
-                                        if motor_queue.empty():
-                                            motor_queue.put("gauge_correction")
+                                    if reading < 2.0:
+                                        # Atomic gating: check and enqueue in single locked block
+                                        with motor_gate_lock:
+                                            now = time.time()
+                                            if (not motor_busy.is_set() and 
+                                                motor_queue.empty() and 
+                                                (now - motor_last_completion) >= MOTOR_COOLDOWN_SECONDS):
+                                                try:
+                                                    motor_queue.put_nowait("gauge_correction")
+                                                    print(f"[motor] Command enqueued - reading: {reading:.2f}")
+                                                except queue.Full:
+                                                    print("[motor] Command rejected - queue full")
+                                            else:
+                                                if motor_busy.is_set():
+                                                    print("[motor] Command rejected - motor busy")
+                                                elif not motor_queue.empty():
+                                                    print("[motor] Command rejected - queue not empty")
+                                                else:
+                                                    remaining = MOTOR_COOLDOWN_SECONDS - (now - motor_last_completion)
+                                                    print(f"[motor] Command rejected - cooldown active ({remaining:.1f}s remaining)")
                                     #print(f"Gauge reading: {reading:.2f} bar (angle {angle:.1f}Â°)")
 
                     elif label == "ARUCO":
