@@ -31,7 +31,7 @@ from enviroplus import gas
 from ltr559 import LTR559
 
 # -------------------- Global Variables --------------------
-SERVER_URL = "http://192.168.1.237:5000 # replace
+SERVER_URL = "http://10.88.42.96:5000" # replace
 
 
 # -------------------- Sensor Code --------------------
