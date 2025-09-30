@@ -540,9 +540,9 @@ with dai.Device(pipeline) as device:
                                     send_detection("gauge", details, frame)
 
                                     if reading < 2.0 and motor_flag == 0:
-                                        #rotate_servo(10.0, True)
-                                        #sleep(0.5)
-                                        #rotate_servo(10.0, False)
+                                        rotate_servo(10.0, True)
+                                        sleep(0.5)
+                                        rotate_servo(10.0, False)
                                         motor_flag = 1
                                     #print(f"Gauge reading: {reading:.2f} bar (angle {angle:.1f}Â°)")
 
