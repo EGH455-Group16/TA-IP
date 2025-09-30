@@ -601,7 +601,7 @@ with dai.Device(pipeline) as device:
                                     
                                     send_detection("gauge", details, frame)
 
-                                    if reading < 2.0 and motor_flag = 0:
+                                    if reading < 2.0 and motor_flag == 0:
                                         # Atomic gating: check and enqueue in single locked block
                                         with motor_gate_lock:
                                             now = time.time()
