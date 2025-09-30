@@ -54,10 +54,7 @@ state_lock = threading.Lock()
 # Motor threading primitives
 motor_queue = queue.Queue(maxsize=1)   # only one command at a time
 motor_busy = threading.Event()         # indicates motor is running
-motor_gate_lock = threading.Lock()     # atomic gating for enqueue
-motor_last_completion = 0.0            # timestamp of last sequence completion
-MOTOR_COOLDOWN_SECONDS = 30.0          # cooldown period after completion
-motor_flag = 0                         # flag to indicate motor operation
+motor_flag = 0                         # flag to prevent continuous triggering
 # Init LCD
 
 lcd = st7735.ST7735(
@@ -198,10 +195,8 @@ def _motor_worker():
             if cmd == "gauge_correction":
                 # Extend phase
                 print("[motor] Extend phase: start")
-                start_time = time.time()
                 rotate_servo(10.0, True)
-                elapsed = time.time() - start_time
-                print(f"[motor] Extend phase: end (elapsed {elapsed:.1f}s)")
+                print("[motor] Extend phase: end")
                 
                 # Pause phase
                 print("[motor] Pause phase: 0.5s")
@@ -209,10 +204,8 @@ def _motor_worker():
                 
                 # Retract phase
                 print("[motor] Retract phase: start")
-                start_time = time.time()
                 rotate_servo(10.0, False)
-                elapsed = time.time() - start_time
-                print(f"[motor] Retract phase: end (elapsed {elapsed:.1f}s)")
+                print("[motor] Retract phase: end")
                 
                 print("[motor] Sequence completed successfully")
         except Exception as e:
@@ -221,8 +214,8 @@ def _motor_worker():
             # Guaranteed final stop
             _force_motor_stop()
             motor_busy.clear()
-            motor_last_completion = time.time()
-            print(f"[motor] Cooldown active until {motor_last_completion + MOTOR_COOLDOWN_SECONDS:.1f}")
+            motor_flag = 0  # Reset flag to allow future triggers
+            print("[motor] Motor flag reset - ready for next trigger")
             motor_queue.task_done()
 
 # ---------------- Display thread --------------------
@@ -602,26 +595,13 @@ with dai.Device(pipeline) as device:
                                     send_detection("gauge", details, frame)
 
                                     if reading < 2.0 and motor_flag == 0:
-                                        # Atomic gating: check and enqueue in single locked block
-                                        with motor_gate_lock:
-                                            now = time.time()
-                                            if (not motor_busy.is_set() and 
-                                                motor_queue.empty() and 
-                                                (now - motor_last_completion) >= MOTOR_COOLDOWN_SECONDS):
-                                                try:
-                                                    motor_queue.put_nowait("gauge_correction")
-                                                    print(f"[motor] Command enqueued - reading: {reading:.2f}")
-                                                except queue.Full:
-                                                    print("[motor] Command rejected - queue full")
-                                            else:
-                                                if motor_busy.is_set():
-                                                    print("[motor] Command rejected - motor busy")
-                                                elif not motor_queue.empty():
-                                                    print("[motor] Command rejected - queue not empty")
-                                                else:
-                                                    remaining = MOTOR_COOLDOWN_SECONDS - (now - motor_last_completion)
-                                                    print(f"[motor] Command rejected - cooldown active ({remaining:.1f}s remaining)")
-                                        motor_flag = 1  # set flag to indicate motor operation
+                                        # Simple gating: check flag and enqueue
+                                        try:
+                                            motor_queue.put_nowait("gauge_correction")
+                                            motor_flag = 1  # set flag to prevent continuous triggering
+                                            print(f"[motor] Command enqueued - reading: {reading:.2f}")
+                                        except queue.Full:
+                                            print("[motor] Command rejected - queue full")
                                     #print(f"Gauge reading: {reading:.2f} bar (angle {angle:.1f}Â°)")
 
                     elif label == "ARUCO":
