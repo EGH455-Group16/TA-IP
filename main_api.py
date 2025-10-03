@@ -209,7 +209,7 @@ def sensor_post_loop():
                     "humidity_pct": humidity
                 }
             payload = {
-                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "timestamp": datetime.datetime.now(timezone.utc).isoformat(),
                 "co_ppm": ppm_CO,
                 "no2_ppm": ppm_NO2,
                 "nh3_ppm": ppm_NH3,
