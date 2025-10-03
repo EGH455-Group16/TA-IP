@@ -277,11 +277,6 @@ def display_loop():
                 display_mode = state["display_mode"]
                 detections = state["detections"]
             
-
-            
-            # Clear screen
-            draw.rectangle((0, 0, LCD_W, LCD_H), fill=(0, 0, 0))
-            
             # Display based on mode
             if display_mode == "ip":
                 draw.text((2, 2), f"IP: {ip}", font=font, fill=(255, 255, 255))
