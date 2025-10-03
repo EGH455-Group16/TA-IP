@@ -62,3 +62,4 @@ typing_extensions==4.15.0
 urllib3==2.5.0
 xmltodict==1.0.2
 zope.interface==8.0.1
+python-socketio==5.11.4
