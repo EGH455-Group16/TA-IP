@@ -15,6 +15,7 @@ import json
 import datetime
 import blobconverter
 import requests, datetime, os
+from datetime import timezone
 from utils import ARUCO_DICT
 import math
 import socket
@@ -30,9 +31,12 @@ from smbus2 import SMBus
 from bme280 import BME280
 from enviroplus import gas
 from ltr559 import LTR559
+import socketio
 
 # -------------------- Global Variables --------------------
 SERVER_URL = "http://10.88.42.96:5000" # replace
+SOCKETIO_URL = "http://10.88.42.96:5000"  # SocketIO server URL
+DEVICE_ID = "pi_device_001"  # Unique device identifier
 
 
 # -------------------- Sensor Code --------------------
@@ -48,8 +52,35 @@ state = {
     "ip" : " 0.0.0.0",
     "air_c": 0.0,
     "cpu_c": 0.0,
+    "display_mode": "default",  # default, ip, targets, temp, sensors
+    "detections": [],  # Current detections for targets mode
 }
 state_lock = threading.Lock()
+
+# SocketIO client
+sio = socketio.Client()
+
+# SocketIO Event Handlers
+@sio.event
+def connect():
+    print(f"[SocketIO] Connected to server with device_id: {DEVICE_ID}")
+    sio.emit('join_room', {'device_id': DEVICE_ID})
+
+@sio.event
+def disconnect():
+    print("[SocketIO] Disconnected from server")
+
+@sio.event
+def set_display(data):
+    """Handle display mode change from GCS"""
+    display_mode = data.get('mode', 'default')
+    with state_lock:
+        state['display_mode'] = display_mode
+    print(f"[SocketIO] Display mode changed to: {display_mode}")
+
+@sio.event
+def connect_error(data):
+    print(f"[SocketIO] Connection error: {data}")
 
 # Motor threading primitives
 motor_queue = queue.Queue(maxsize=1)   # only one command at a time
@@ -168,6 +199,15 @@ def sensor_post_loop():
             with state_lock:
                 state["air_c"] = temperature
                 state["cpu_c"] = cpu_c
+                # Store sensor data for sensors display mode
+                state["sensor_data"] = {
+                    "co_ppm": ppm_CO,
+                    "no2_ppm": ppm_NO2,
+                    "nh3_ppm": ppm_NH3,
+                    "light_lux": lux,
+                    "pressure_hpa": pressure,
+                    "humidity_pct": humidity
+                }
             payload = {
                 "timestamp": datetime.now(timezone.utc).isoformat(),
                 "co_ppm": ppm_CO,
@@ -229,26 +269,76 @@ def display_loop():
             pil = Image.fromarray(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
             pil = ImageOps.fit(pil, (LCD_W, LCD_H), Image.BILINEAR)
             draw = ImageDraw.Draw(pil)
+            
             with state_lock:
                 ip = state["ip"]
                 air_c = state["air_c"]
                 cpu_c = state["cpu_c"]
+                display_mode = state["display_mode"]
+                detections = state["detections"]
+                sensor_data = state.get("sensor_data", {})
             
             # Motor status
             running = motor_busy.is_set()
             motor_text = "MOTOR: RUNNING" if running else "MOTOR: IDLE"
             
-            draw.rectangle((0,0,LCD_W,14), fill =(0,0,0))
-            draw.text((2, 2), f"IP:{ip}", font=font, fill=(255,255,255))
-            draw.text((2, 16), motor_text, font=font, fill=(255,255,0))
-            draw.rectangle((0,LCD_H-14,LCD_W,LCD_H), fill =(0,0,0))
-            draw.text((2, LCD_H-12), f"Air:{air_c:.1f}C CPU:{cpu_c:.1f}C", font=font, fill=(255,255,255))
+            # Clear screen
+            draw.rectangle((0, 0, LCD_W, LCD_H), fill=(0, 0, 0))
+            
+            # Display based on mode
+            if display_mode == "ip":
+                draw.text((2, 2), f"IP: {ip}", font=font, fill=(255, 255, 255))
+                draw.text((2, 16), f"Mode: IP", font=font, fill=(0, 255, 0))
+                
+            elif display_mode == "targets":
+                draw.text((2, 2), f"TARGETS: {len(detections)}", font=font, fill=(255, 255, 0))
+                draw.text((2, 16), f"Mode: TARGETS", font=font, fill=(0, 255, 0))
+                # Show detection details
+                y_offset = 30
+                for i, det in enumerate(detections[:3]):  # Show max 3 detections
+                    label = det.get('label', 'Unknown')
+                    conf = det.get('confidence', 0)
+                    draw.text((2, y_offset), f"{label}: {conf:.1f}%", font=font, fill=(255, 255, 255))
+                    y_offset += 14
+                    
+            elif display_mode == "temp":
+                draw.text((2, 2), f"Air: {air_c:.1f}C", font=font, fill=(255, 255, 255))
+                draw.text((2, 16), f"CPU: {cpu_c:.1f}C", font=font, fill=(255, 255, 255))
+                draw.text((2, 30), f"Mode: TEMP", font=font, fill=(0, 255, 0))
+                
+            elif display_mode == "sensors":
+                # Show sensor data
+                draw.text((2, 2), f"CO: {sensor_data.get('co_ppm', 0):.1f}ppm", font=font, fill=(255, 255, 255))
+                draw.text((2, 16), f"NO2: {sensor_data.get('no2_ppm', 0):.1f}ppm", font=font, fill=(255, 255, 255))
+                draw.text((2, 30), f"NH3: {sensor_data.get('nh3_ppm', 0):.1f}ppm", font=font, fill=(255, 255, 255))
+                draw.text((2, 44), f"Lux: {sensor_data.get('light_lux', 0):.0f}", font=font, fill=(255, 255, 255))
+                draw.text((2, 58), f"Mode: SENSORS", font=font, fill=(0, 255, 0))
+                
+            else:  # default mode
+                draw.rectangle((0,0,LCD_W,14), fill =(0,0,0))
+                draw.text((2, 2), f"IP:{ip}", font=font, fill=(255,255,255))
+                draw.text((2, 16), motor_text, font=font, fill=(255,255,0))
+                draw.rectangle((0,LCD_H-14,LCD_W,LCD_H), fill =(0,0,0))
+                draw.text((2, LCD_H-12), f"Air:{air_c:.1f}C CPU:{cpu_c:.1f}C", font=font, fill=(255,255,255))
+            
             lcd.display(pil)
+# SocketIO connection management
+def socketio_connect():
+    """Connect to SocketIO server with retry logic"""
+    while True:
+        try:
+            sio.connect(SOCKETIO_URL)
+            break
+        except Exception as e:
+            print(f"[SocketIO] Connection failed: {e}, retrying in 5 seconds...")
+            time.sleep(5)
+
 # Start threads
 lcd_queue = queue.Queue(maxsize=3)
 threading.Thread(target=sensor_post_loop, daemon=True).start()
 threading.Thread(target=display_loop, daemon=True).start()
 threading.Thread(target=_motor_worker, daemon=True).start()
+threading.Thread(target=socketio_connect, daemon=True).start()
 
 
 # -------------------- End Sensor Code -------------------
@@ -525,14 +615,26 @@ with dai.Device(pipeline) as device:
             counter += 1
         
         if frame is not None:
+            # Update detections in shared state for targets display mode
+            current_detections = []
             for detection in detections:
-                
                 bbox = frameNorm(frame, (detection.xmin, detection.ymin, detection.xmax, detection.ymax))
+                detection_info = {
+                    'label': labels[detection.label],
+                    'confidence': detection.confidence,
+                    'bbox': bbox.tolist()
+                }
+                current_detections.append(detection_info)
+                
                 cv2.putText(frame, labels[detection.label], (bbox[0] + 10, bbox[1] + 20),
                             cv2.FONT_HERSHEY_TRIPLEX, 0.5, (255, 0, 0))
                 cv2.putText(frame, f"{int(detection.confidence * 100)}%", (bbox[0] + 10, bbox[1] + 40),
                             cv2.FONT_HERSHEY_TRIPLEX, 0.5, (255, 0, 0))
                 cv2.rectangle(frame, (bbox[0], bbox[1]), (bbox[2], bbox[3]), (255, 0, 0), 2)
+            
+            # Update shared state with current detections
+            with state_lock:
+                state["detections"] = current_detections
 
             try:
                 lcd_queue.put_nowait(frame.copy())
