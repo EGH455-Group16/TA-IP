@@ -276,11 +276,8 @@ def display_loop():
                 cpu_c = state["cpu_c"]
                 display_mode = state["display_mode"]
                 detections = state["detections"]
-                sensor_data = state.get("sensor_data", {})
             
-            # Motor status
-            running = motor_busy.is_set()
-            motor_text = "MOTOR: RUNNING" if running else "MOTOR: IDLE"
+
             
             # Clear screen
             draw.rectangle((0, 0, LCD_W, LCD_H), fill=(0, 0, 0))
@@ -306,18 +303,10 @@ def display_loop():
                 draw.text((2, 16), f"CPU: {cpu_c:.1f}C", font=font, fill=(255, 255, 255))
                 draw.text((2, 30), f"Mode: TEMP", font=font, fill=(0, 255, 0))
                 
-            elif display_mode == "sensors":
-                # Show sensor data
-                draw.text((2, 2), f"CO: {sensor_data.get('co_ppm', 0):.1f}ppm", font=font, fill=(255, 255, 255))
-                draw.text((2, 16), f"NO2: {sensor_data.get('no2_ppm', 0):.1f}ppm", font=font, fill=(255, 255, 255))
-                draw.text((2, 30), f"NH3: {sensor_data.get('nh3_ppm', 0):.1f}ppm", font=font, fill=(255, 255, 255))
-                draw.text((2, 44), f"Lux: {sensor_data.get('light_lux', 0):.0f}", font=font, fill=(255, 255, 255))
-                draw.text((2, 58), f"Mode: SENSORS", font=font, fill=(0, 255, 0))
                 
             else:  # default mode
                 draw.rectangle((0,0,LCD_W,14), fill =(0,0,0))
                 draw.text((2, 2), f"IP:{ip}", font=font, fill=(255,255,255))
-                draw.text((2, 16), motor_text, font=font, fill=(255,255,0))
                 draw.rectangle((0,LCD_H-14,LCD_W,LCD_H), fill =(0,0,0))
                 draw.text((2, LCD_H-12), f"Air:{air_c:.1f}C CPU:{cpu_c:.1f}C", font=font, fill=(255,255,255))
             
