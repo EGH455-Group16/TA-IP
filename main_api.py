@@ -591,160 +591,161 @@ d = np.load(distortion_coefficients_path)
 
 points = {"Center": (0,0), "Tip": (0,0), "Tail": (0,0)}
 # Connect to device and start pipeline
-try:
-    with dai.Device(pipeline) as device:
+while True:
+    try:
+        with dai.Device(pipeline) as device:
 
-        # Output queues will be used to get the rgb frames and nn data from the outputs defined above
-        qRgb = device.getOutputQueue(name="rgb", maxSize=4, blocking=False)
-        qDet = device.getOutputQueue(name="nn", maxSize=4, blocking=False)
+            # Output queues will be used to get the rgb frames and nn data from the outputs defined above
+            qRgb = device.getOutputQueue(name="rgb", maxSize=4, blocking=False)
+            qDet = device.getOutputQueue(name="nn", maxSize=4, blocking=False)
 
-        frame = None
-        detections = []
-        startTime = time.monotonic()
-        counter = 0
-        color2 = (255, 255, 255)
-
-        # nn data, being the bounding box locations, are in <0..1> range - they need to be normalized with frame width/height
-        def frameNorm(frame, bbox):
-            normVals = np.full(len(bbox), frame.shape[0])
-            normVals[::2] = frame.shape[1]
-            return (np.clip(np.array(bbox), 0, 1) * normVals).astype(int)
-
-        def displayFrame(name, frame, detections):
-            color = (255, 0, 0)
-            for detection in detections:
-                bbox = frameNorm(frame, (detection.xmin, detection.ymin, detection.xmax, detection.ymax))
-                cv2.putText(frame, labels[detection.label], (bbox[0] + 10, bbox[1] + 20), cv2.FONT_HERSHEY_TRIPLEX, 0.5, 255)
-                cv2.putText(frame, f"{int(detection.confidence * 100)}%", (bbox[0] + 10, bbox[1] + 40), cv2.FONT_HERSHEY_TRIPLEX, 0.5, 255)
-                cv2.rectangle(frame, (bbox[0], bbox[1]), (bbox[2], bbox[3]), color, 2)
-            # Show the frame
-            cv2.imshow(name, frame)
-
-        while True:
-            inRgb = qRgb.get()
-            inDet = qDet.get()
-
-            if inRgb is not None:
-                frame = inRgb.getCvFrame()
-                cv2.putText(frame, "NN fps: {:.2f}".format(counter / (time.monotonic() - startTime)),
-                            (2, frame.shape[0] - 4), cv2.FONT_HERSHEY_TRIPLEX, 0.4, color2)
-
+            frame = None
             detections = []
-            if inDet is not None:
-                detections = inDet.detections
-                counter += 1
-            
-            if frame is not None:
-                # Update detections in shared state for targets display mode
-                current_detections = []
+            startTime = time.monotonic()
+            counter = 0
+            color2 = (255, 255, 255)
+
+            # nn data, being the bounding box locations, are in <0..1> range - they need to be normalized with frame width/height
+            def frameNorm(frame, bbox):
+                normVals = np.full(len(bbox), frame.shape[0])
+                normVals[::2] = frame.shape[1]
+                return (np.clip(np.array(bbox), 0, 1) * normVals).astype(int)
+
+            def displayFrame(name, frame, detections):
+                color = (255, 0, 0)
                 for detection in detections:
                     bbox = frameNorm(frame, (detection.xmin, detection.ymin, detection.xmax, detection.ymax))
-                    detection_info = {
-                        'label': labels[detection.label],
-                        'confidence': detection.confidence,
-                        'bbox': bbox.tolist()
-                    }
-                    current_detections.append(detection_info)
-                    
-                    cv2.putText(frame, labels[detection.label], (bbox[0] + 10, bbox[1] + 20),
-                                cv2.FONT_HERSHEY_TRIPLEX, 0.5, (255, 0, 0))
-                    cv2.putText(frame, f"{int(detection.confidence * 100)}%", (bbox[0] + 10, bbox[1] + 40),
-                                cv2.FONT_HERSHEY_TRIPLEX, 0.5, (255, 0, 0))
-                    cv2.rectangle(frame, (bbox[0], bbox[1]), (bbox[2], bbox[3]), (255, 0, 0), 2)
-                
-                # Update shared state with current detections
-                with state_lock:
-                    state["detections"] = current_detections
+                    cv2.putText(frame, labels[detection.label], (bbox[0] + 10, bbox[1] + 20), cv2.FONT_HERSHEY_TRIPLEX, 0.5, 255)
+                    cv2.putText(frame, f"{int(detection.confidence * 100)}%", (bbox[0] + 10, bbox[1] + 40), cv2.FONT_HERSHEY_TRIPLEX, 0.5, 255)
+                    cv2.rectangle(frame, (bbox[0], bbox[1]), (bbox[2], bbox[3]), color, 2)
+                # Show the frame
+                cv2.imshow(name, frame)
 
-                try:
-                    lcd_queue.put_nowait(frame.copy())
-                except queue.Full:
-                    pass
+            while True:
+                inRgb = qRgb.get()
+                inDet = qDet.get()
+
+                if inRgb is not None:
+                    frame = inRgb.getCvFrame()
+                    cv2.putText(frame, "NN fps: {:.2f}".format(counter / (time.monotonic() - startTime)),
+                                (2, frame.shape[0] - 4), cv2.FONT_HERSHEY_TRIPLEX, 0.4, color2)
+
+                detections = []
+                if inDet is not None:
+                    detections = inDet.detections
+                    counter += 1
                 
-                # Draw bboxes for human operator
-                
-                displayFrame("rgb", frame, detections)
-                if not detections:
-                    detail= {
-                        "id": "livedata",
-                    }
-                    send_detection("livedata", detail, frame)
-                else:
-                    # Send detections to server
-                    for det in detections:
-                        bbox = frameNorm(frame, (det.xmin, det.ymin, det.xmax, det.ymax))
-                        label = labels[det.label]
+                if frame is not None:
+                    # Update detections in shared state for targets display mode
+                    current_detections = []
+                    for detection in detections:
+                        bbox = frameNorm(frame, (detection.xmin, detection.ymin, detection.xmax, detection.ymax))
+                        detection_info = {
+                            'label': labels[detection.label],
+                            'confidence': detection.confidence,
+                            'bbox': bbox.tolist()
+                        }
+                        current_detections.append(detection_info)
                         
-                        if label in ["open-valve", "closed-valve"]:
-                            #displayFrame("rgb", output, detections)
+                        cv2.putText(frame, labels[detection.label], (bbox[0] + 10, bbox[1] + 20),
+                                    cv2.FONT_HERSHEY_TRIPLEX, 0.5, (255, 0, 0))
+                        cv2.putText(frame, f"{int(detection.confidence * 100)}%", (bbox[0] + 10, bbox[1] + 40),
+                                    cv2.FONT_HERSHEY_TRIPLEX, 0.5, (255, 0, 0))
+                        cv2.rectangle(frame, (bbox[0], bbox[1]), (bbox[2], bbox[3]), (255, 0, 0), 2)
+                    
+                    # Update shared state with current detections
+                    with state_lock:
+                        state["detections"] = current_detections
 
-                            details = {
-                                "state": "open" if "open" in label else "closed",
-                                "confidence": round(det.confidence, 2),
-                                "bbox": bbox.tolist()
-                            }
-                            send_detection("valve", details, frame)
-                        elif label == "Gauge":
-                            for det in detections:
+                    try:
+                        lcd_queue.put_nowait(frame.copy())
+                    except queue.Full:
+                        pass
+                    
+                    # Draw bboxes for human operator
+                    
+                    displayFrame("rgb", frame, detections)
+                    if not detections:
+                        detail= {
+                            "id": "livedata",
+                        }
+                        send_detection("livedata", detail, frame)
+                    else:
+                        # Send detections to server
+                        for det in detections:
+                            bbox = frameNorm(frame, (det.xmin, det.ymin, det.xmax, det.ymax))
+                            label = labels[det.label]
+                            
+                            if label in ["open-valve", "closed-valve"]:
                                 #displayFrame("rgb", output, detections)
-                                bbox = frameNorm(frame, (det.xmin, det.ymin, det.xmax, det.ymax))
-                                label = labels[det.label]
-                                if label in ["Center", "Tip", "Tail"]:
-                                    points[label] = bbox_center(bbox.tolist())
-                                
-                                if labels != "Gauge":
-                                    if (points["Center"] != (0,0) and
-                                        points["Tip"] != (0,0) and
-                                        points["Tail"] != (0,0)):
 
-                                        center = points["Center"]
-                                        tip = points["Tip"]
-                                        tail = points["Tail"]
-                                        
-                                        # reading, angle = gauge_reading(center, tip,
-                                        #     min_val=0, max_val=10, 
-                                        #     theta_min=270, theta_max=0
-                                        # )
-                                        reading, angle = update_gauge(center, tip, tail)
-                                        #print(f"Avg reading: {reading:.2f} bar (angle {angle:.1f}Â°)")
-                                        details = {
-                                            "id": "guage",
-                                            "reading_bar": round(reading, 2),
-                                            "confidence": round(det.confidence, 2),
-                                            "bbox": bbox.tolist()
-                                        }
-                                        
-                                        send_detection("gauge", details, frame)
-
-                                        if reading < 2.0 and motor_flag == 0:
-                                            # Simple gating: check flag and enqueue
-                                            try:
-                                                motor_queue.put_nowait("gauge_correction")
-                                                motor_flag = 1  # set flag to prevent continuous triggering
-                                                print(f"[motor] Command enqueued - reading: {reading:.2f}")
-                                            except queue.Full:
-                                                print("[motor] Command rejected - queue full")
-                                        #print(f"Gauge reading: {reading:.2f} bar (angle {angle:.1f}Â°)")
-
-                        elif label == "ARUCO":
-                            output, marker_id, pose = pose_estimation(frame, aruco_dict_type, k, d)
-                            #displayFrame("rgb", output, detections)
-                            if marker_id is not None:
                                 details = {
-                                    "id": marker_id,
-                                    "pose": pose,
+                                    "state": "open" if "open" in label else "closed",
                                     "confidence": round(det.confidence, 2),
                                     "bbox": bbox.tolist()
                                 }
-                                send_detection("aruco", details, frame)
-                                #print(f"[Pose] ID={marker_id}, position={pose}")
-            if cv2.waitKey(1) == ord('q'):
-                break
-except Exception as e:
-    print("Detection processing error:", e)
-    # Just wait a second
-    time.sleep(1.0)
-    # Continue - device will be reconnected in the next loop
+                                send_detection("valve", details, frame)
+                            elif label == "Gauge":
+                                for det in detections:
+                                    #displayFrame("rgb", output, detections)
+                                    bbox = frameNorm(frame, (det.xmin, det.ymin, det.xmax, det.ymax))
+                                    label = labels[det.label]
+                                    if label in ["Center", "Tip", "Tail"]:
+                                        points[label] = bbox_center(bbox.tolist())
+                                    
+                                    if labels != "Gauge":
+                                        if (points["Center"] != (0,0) and
+                                            points["Tip"] != (0,0) and
+                                            points["Tail"] != (0,0)):
+
+                                            center = points["Center"]
+                                            tip = points["Tip"]
+                                            tail = points["Tail"]
+                                            
+                                            # reading, angle = gauge_reading(center, tip,
+                                            #     min_val=0, max_val=10, 
+                                            #     theta_min=270, theta_max=0
+                                            # )
+                                            reading, angle = update_gauge(center, tip, tail)
+                                            #print(f"Avg reading: {reading:.2f} bar (angle {angle:.1f}Â°)")
+                                            details = {
+                                                "id": "guage",
+                                                "reading_bar": round(reading, 2),
+                                                "confidence": round(det.confidence, 2),
+                                                "bbox": bbox.tolist()
+                                            }
+                                            
+                                            send_detection("gauge", details, frame)
+
+                                            if reading < 2.0 and motor_flag == 0:
+                                                # Simple gating: check flag and enqueue
+                                                try:
+                                                    motor_queue.put_nowait("gauge_correction")
+                                                    motor_flag = 1  # set flag to prevent continuous triggering
+                                                    print(f"[motor] Command enqueued - reading: {reading:.2f}")
+                                                except queue.Full:
+                                                    print("[motor] Command rejected - queue full")
+                                            #print(f"Gauge reading: {reading:.2f} bar (angle {angle:.1f}Â°)")
+
+                            elif label == "ARUCO":
+                                output, marker_id, pose = pose_estimation(frame, aruco_dict_type, k, d)
+                                #displayFrame("rgb", output, detections)
+                                if marker_id is not None:
+                                    details = {
+                                        "id": marker_id,
+                                        "pose": pose,
+                                        "confidence": round(det.confidence, 2),
+                                        "bbox": bbox.tolist()
+                                    }
+                                    send_detection("aruco", details, frame)
+                                    #print(f"[Pose] ID={marker_id}, position={pose}")
+                if cv2.waitKey(1) == ord('q'):
+                    break
+    except Exception as e:
+        print("Detection processing error:", e)
+        # Just wait a second
+        time.sleep(1.0)
+        # Continue - device will be reconnected in the next loop
                         
                         
 
