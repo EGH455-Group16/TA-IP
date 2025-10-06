@@ -277,8 +277,8 @@ def _motor_worker():
 def display_loop():
         last_touch = 0
         armed = True
-        PROX_HIGH = 1500
-        PROX_LOW = 800
+        PROX_HIGH = 10
+        PROX_LOW = 5
         PROX_COOLDOWN = 0.5  # seconds
 
         while True:
