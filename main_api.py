@@ -163,7 +163,7 @@ def read_lux():
 def touch_screen():
     """Cycle display modes on touch"""
     with state_lock:
-        mode = state["display_mode", "default"]
+        mode = state.get("display_mode", "default")
 
         if mode == "ip":
             state["display_mode"] = "targets"
@@ -236,7 +236,7 @@ def sensor_post_loop():
         except Exception:
             # Dont crash, just try again in a second
             pass
-        #time.sleep(1.0) why is this here?
+        time.sleep(1.0) #why is this here? - To give the CPU some rest. Dont want to hammer the sensors too much.
 
 # ---------------- Motor thread --------------------
 
