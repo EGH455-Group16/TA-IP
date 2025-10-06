@@ -302,7 +302,7 @@ def display_loop():
             try:
                 frame = lcd_queue.get(timeout=1.0)
             except queue.Empty:
-                continue
+                frame = None
             pil = Image.fromarray(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
             pil = ImageOps.fit(pil, (LCD_W, LCD_H), Image.BILINEAR)
             draw = ImageDraw.Draw(pil)
