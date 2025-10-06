@@ -160,6 +160,20 @@ def read_lux():
         return 0.0
     return float(lux)
 
+def touch_screen():
+    """Cycle display modes on touch"""
+    with state_lock:
+        mode = state["display_mode", "default"]
+
+        if mode == "ip":
+            state["display_mode"] = "targets"
+        elif mode == "targets":
+            state["display_mode"] = "temp"
+        elif mode == "temp":
+            state["display_mode"] = "default"
+        else:
+            state["display_mode"] = "ip"
+
 bus = SMBus(1)
 bme280 = BME280(i2c_dev=bus)
 
@@ -261,7 +275,28 @@ def _motor_worker():
 # ---------------- Display thread --------------------
 
 def display_loop():
+        last_touch = 0
+        armed = True
+        PROX_HIGH = 1500
+        PROX_LOW = 800
+        PROX_COOLDOWN = 0.5  # seconds
+
         while True:
+
+            try:
+                prox = ltr559.get_proximity()
+            except Exception:
+                prox = 0
+            
+            now = time.time()
+            if armed and prox > PROX_HIGH and (now - last_touch) > PROX_COOLDOWN:
+                touch_screen()
+                armed = False
+                last_touch = now
+            elif not armed and prox < PROX_LOW:
+                armed = True
+
+
             try:
                 frame = lcd_queue.get(timeout=1.0)
             except queue.Empty:
