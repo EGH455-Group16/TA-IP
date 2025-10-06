@@ -288,7 +288,7 @@ def display_loop():
             except Exception:
                 prox = 0
             
-            print (f"Proximity: {prox}")
+            #print (f"Proximity: {prox}") # Debug only
             now = time.time()
             if armed and prox > PROX_HIGH and (now - last_touch) > PROX_COOLDOWN:
                 touch_screen()
@@ -299,7 +299,7 @@ def display_loop():
 
 
             try:
-                frame = lcd_queue.get(timeout=1.0)
+                frame = lcd_queue.get(timeout=0.5)
             except queue.Empty:
                 frame = None
 
