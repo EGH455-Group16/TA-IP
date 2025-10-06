@@ -284,10 +284,12 @@ def display_loop():
         while True:
 
             try:
-                prox = ltr559.get_proximity()
+                ltr559.update_sensor()
+                prox = ltr559.get_proximity() or 0
             except Exception:
                 prox = 0
             
+            print (f"Proximity: {prox}")
             now = time.time()
             if armed and prox > PROX_HIGH and (now - last_touch) > PROX_COOLDOWN:
                 touch_screen()
