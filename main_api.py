@@ -41,7 +41,6 @@ DEVICE_ID = "pi_device_001"  # Unique device identifier
 
 # -------------------- Sensor Code --------------------
 ltr559 = LTR559()
-SERVER_URL_SENSORS = "http://192.168.1.237:5000"
 LCD_ROTATION = 270
 LCD_SPI_SPEED_HZ = 4000000
 LCD_FPS = 15
