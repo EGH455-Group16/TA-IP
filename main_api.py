@@ -96,15 +96,15 @@ detectionNetwork.setNumInferenceThreads(2)
 detectionNetwork.input.setBlocking(False)
 
 # deque to handle auto popping, change len for larger moving avg
-readings = deque(maxlen=30)  # 10 sample window
-angles   = deque(maxlen=30)
+readings = deque(maxlen=50)  # 10 sample window
+angles   = deque(maxlen=50)
 
 def update_gauge(center, tip, tail):
 
     reading_tt, angle_tt = gauge_reading(tail, tip) # tip to tail readings
     reading_ct, angle_ct = gauge_reading(center, tip) # center to tip readings
     reading_tc, angle_tc = gauge_reading(tail, center) # tail to center readings
-    print(f"RAW Readings: {reading_tt:.2f}, {reading_ct:.2f}, {reading_tc:.2f}")
+    # print(f"RAW Readings: {reading_tt:.2f}, {reading_ct:.2f}, {reading_tc:.2f}")
     # append to deque
     readings.append(reading_tt)
     readings.append(reading_ct)
@@ -116,7 +116,32 @@ def update_gauge(center, tip, tail):
     
     return np.median(readings), np.median(angles) # send 
 
-    
+def bbox_corners(bbox):
+    """Return four corner coordinates of a bounding box (xmin, ymin, xmax, ymax)."""
+    xmin, ymin, xmax, ymax = bbox
+    return np.array([
+        [xmin, ymin],
+        [xmax, ymin],
+        [xmax, ymax],
+        [xmin, ymax]
+    ])
+
+# def farthest_corner_from_center(center, tip_bbox):
+#     """Find the corner of the tip box farthest from the gauge center."""
+#     corners = bbox_corners(tip_bbox)
+#     dists = np.linalg.norm(corners - np.array(center), axis=1)
+#     farthest = corners[np.argmax(dists)]
+#     return tuple(farthest)   
+
+def farthest_corner_from_center(center_xy, bbox_xyxy):
+    """Return the corner of bbox farthest from center."""
+    if len(bbox_xyxy) != 4:
+        raise ValueError(f"Tip bbox must be [xmin,ymin,xmax,ymax], got {bbox_xyxy}")
+    xmin, ymin, xmax, ymax = map(float, bbox_xyxy)
+    corners = np.array([[xmin, ymin], [xmax, ymin], [xmax, ymax], [xmin, ymax]], dtype=np.float32)
+    c = np.array(center_xy, dtype=np.float32)
+    idx = np.argmax(np.sum((corners - c) ** 2, axis=1))  # squared distance, no sqrt
+    return tuple(corners[idx])
 
 # Linking
 camRgb.preview.link(detectionNetwork.input)
@@ -235,8 +260,8 @@ def gauge_reading(center, tip, min_val=0, max_val=10, theta_min=225, theta_max=3
 
 # ARUCO CODE:
 aruco_dict_type = ARUCO_DICT["DICT_5X5_100"]
-calibration_matrix_path = ".\calibration_matrix.npy"
-distortion_coefficients_path = ".\distortion_coefficients.npy"
+calibration_matrix_path = "calibration_matrix.npy"
+distortion_coefficients_path = "distortion_coefficients.npy"
 
 k = np.load(calibration_matrix_path)
 d = np.load(distortion_coefficients_path)
@@ -288,7 +313,10 @@ with dai.Device(pipeline) as device:
         if frame is not None:
             # Draw bboxes for human operator
             
-            displayFrame("rgb", frame, detections)
+            # displayFrame("rgb", frame, detections)
+            # Initialise per frame
+            points = {"Center": (0, 0), "Tip": (0, 0), "Tail": (0, 0)}
+            boxes  = {"Center": None, "Tip": None, "Tail": None}
 
             if not detections:
                     details={"state": "live"}
@@ -308,36 +336,45 @@ with dai.Device(pipeline) as device:
                         }
                         print(f"[Valve] State={details['state']}, Confidence={details['confidence']}")
                         #send_detection("valve", details, frame)
+
                     elif label == "Gauge":
                         for det in detections:
-                            bbox = frameNorm(frame, (det.xmin, det.ymin, det.xmax, det.ymax))
-                            label = labels[det.label]
-                            if label in ["Center", "Tip", "Tail"]:
-                                points[label] = bbox_center(bbox.tolist())
-                            
-                            if labels != "Gauge":
-                                if (points["Center"] != (0,0) and
-                                    points["Tip"] != (0,0) and
-                                    points["Tail"] != (0,0)):
+                            # full bbox in xyxy
+                            bbox = frameNorm(frame, (det.xmin, det.ymin, det.xmax, det.ymax)).tolist()
+                            cls = labels[det.label]  # "Center" / "Tip" / "Tail"
 
-                                    center = points["Center"]
-                                    tip = points["Tip"]
-                                    tail = points["Tail"]
-                                    
-                                    # reading, angle = gauge_reading(center, tip,
-                                    #     min_val=0, max_val=10, 
-                                    #     theta_min=270, theta_max=0
-                                    # )
-                                    reading, angle = update_gauge(center, tip, tail)
-                                    print(f"Avg reading: {reading:.2f} bar (angle {angle:.1f}°)")
-                                    details = {
-                                        "id": "guage",
-                                        "reading_bar": round(reading, 2),
-                                        "confidence": round(det.confidence, 2),
-                                        "bbox": bbox.tolist()
-                                    }
-                                    print(f"[Gauge] Reading={details['reading_bar']} bar, Confidence={details['confidence']}")
-                                    #send_detection("gauge", details, frame)
+                            if cls in ("Center", "Tail"):
+                                boxes[cls]  = bbox                 # keep full bbox
+                                points[cls] = bbox_center(bbox)    # keep centre for convenience
+
+                            elif cls == "Tip":
+                                boxes["Tip"] = bbox                # IMPORTANT: keep full bbox (no centre here)
+
+                        # After processing all gauge parts this frame:
+                        if all(boxes[k] is not None for k in ("Center", "Tip", "Tail")):
+                            center = bbox_center(boxes["Center"])
+                            tip_pt = bbox_center(boxes["Tip"])
+                            tail   = bbox_center(boxes["Tail"])
+
+                            # Visualisation (optional)
+                            cv2.circle(frame, (int(center[0]), int(center[1])), 4, (0,255,0), -1)
+                            cv2.circle(frame, (int(tip_pt[0]), int(tip_pt[1])), 4, (0,0,255), -1)
+                            cv2.line(frame, (int(center[0]), int(center[1])), (int(tip_pt[0]), int(tip_pt[1])), (255,0,0), 2)
+                                        
+                            # reading, angle = gauge_reading(center, tip,
+                            #     min_val=0, max_val=10, 
+                            #     theta_min=270, theta_max=0
+                            # )
+                            reading, angle = update_gauge(center, tip_pt, tail)
+                            print(f"Avg reading: {reading:.2f} bar (angle {angle:.1f}°)")
+                            details = {
+                                "id": "guage",
+                                "reading_bar": round(reading, 2),
+                                "confidence": round(det.confidence, 2),
+                                "bbox": bbox
+                            }
+                            # print(f"[Gauge] Reading={details['reading_bar']} bar, Confidence={details['confidence']}")
+                            #send_detection("gauge", details, frame)
 
                     elif label == "ARUCO":
                         output, marker_id, pose = pose_estimation(frame, aruco_dict_type, k, d)
@@ -354,7 +391,7 @@ with dai.Device(pipeline) as device:
                         
 
                         #send_detection("aruco", details, frame)
-
+            displayFrame("rgb", frame, detections)
 
         if cv2.waitKey(1) == ord('q'):
             break   
