@@ -280,7 +280,7 @@ def display_loop():
         PROX_HIGH = 10
         PROX_LOW = 5
         PROX_COOLDOWN = 0.5  # seconds
-
+        blank = Image.new("RGB", (LCD_W, LCD_H), (0, 0, 0))
         while True:
 
             try:
@@ -303,7 +303,11 @@ def display_loop():
                 frame = lcd_queue.get(timeout=1.0)
             except queue.Empty:
                 frame = None
-            pil = Image.fromarray(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
+
+            if frame is None:
+                pil = blank.copy()
+            else:
+                pil = Image.fromarray(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
             pil = ImageOps.fit(pil, (LCD_W, LCD_H), Image.BILINEAR)
             draw = ImageDraw.Draw(pil)
             
