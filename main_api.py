@@ -569,6 +569,7 @@ def send_detection(target_type, details, frame):
     }
 
     data_arr = []
+    # foreach detected target, loop through and attach the target type and details to array to send
     for i in range(target_type.Length):
         data = {
             "ts": datetime.datetime.now().isoformat(),
@@ -718,11 +719,11 @@ while True:
                                 "bbox": bbox.tolist()
                             }
                             details_arr.append(details)
-                            det_arr.append(("aruco", details, frame))
+                            det_arr.append("aruco")
                             # send_detection("aruco", details, frame)
                         else:
                             details.append(details)
-                            det_arr.append(("livedata", details, frame))
+                            det_arr.append("livedata")
                     else:
                         # Send detections to server
                         for det in detections:
@@ -739,7 +740,7 @@ while True:
                                 }
                                 # send_detection("valve", details, frame)
                                 details_arr.append(details)
-                                det_arr.append(("valve", details, frame))
+                                det_arr.append("valve")
                             elif label == "Gauge":
                                 for det in detections:
                                     #displayFrame("rgb", output, detections)
@@ -772,7 +773,7 @@ while True:
                                             
                                             # send_detection("gauge", details, frame)
                                             details_arr.append(details)
-                                            det_arr.append(("gauge", details, frame))
+                                            det_arr.append("gauge")
 
                                             if reading < 2.0 and motor_flag == 0:
                                                 # Simple gating: check flag and enqueue
