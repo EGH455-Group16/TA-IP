@@ -20,17 +20,17 @@ from utils import ARUCO_DICT
 import math
 import socket
 import requests
-from collections import deque
-from gpiozero import Servo
+# from collections import deque
+# from gpiozero import Servo
 from time import sleep
 import threading,queue
 import time
 from PIL import Image, ImageDraw, ImageFont, ImageOps
-import st7735
-from smbus2 import SMBus
-from bme280 import BME280
-from enviroplus import gas
-from ltr559 import LTR559
+# import st7735
+# from smbus2 import SMBus
+# from bme280 import BME280
+# from enviroplus import gas
+# from ltr559 import LTR559
 import socketio
 
 # -------------------- Global Variables --------------------
@@ -40,7 +40,7 @@ DEVICE_ID = "pi_device_001"  # Unique device identifier
 
 
 # -------------------- Sensor Code --------------------
-ltr559 = LTR559()
+# ltr559 = LTR559()
 LCD_ROTATION = 270
 LCD_SPI_SPEED_HZ = 4000000
 LCD_FPS = 15
@@ -87,17 +87,17 @@ motor_busy = threading.Event()         # indicates motor is running
 motor_flag = 0                         # flag to prevent continuous triggering
 # Init LCD
 
-lcd = st7735.ST7735(
-    port=0,
-    cs=1,
-    dc="GPIO9",
-    backlight="GPIO12",
-    rotation=LCD_ROTATION,
-    spi_speed_hz=LCD_SPI_SPEED_HZ
-)
-lcd.begin()
-LCD_W,LCD_H = lcd.width, lcd.height
-font = ImageFont.load_default()
+# lcd = st7735.ST7735(
+#     port=0,
+#     cs=1,
+#     dc="GPIO9",
+#     backlight="GPIO12",
+#     rotation=LCD_ROTATION,
+#     spi_speed_hz=LCD_SPI_SPEED_HZ
+# )
+# lcd.begin()
+# LCD_W,LCD_H = lcd.width, lcd.height
+# font = ImageFont.load_default()
 
 # Init sensors
 
@@ -173,8 +173,8 @@ def touch_screen():
         else:
             state["display_mode"] = "ip"
 
-bus = SMBus(1)
-bme280 = BME280(i2c_dev=bus)
+# bus = SMBus(1)
+# bme280 = BME280(i2c_dev=bus)
 
 # ---------------- Sensor thread --------------------
 def sensor_post_loop():
@@ -185,7 +185,7 @@ def sensor_post_loop():
 
     while True:
         try:
-            g = gas.read_all()
+            # g = gas.read_all()
 
             # Get readings
 
@@ -279,73 +279,73 @@ def display_loop():
         PROX_HIGH = 10
         PROX_LOW = 5
         PROX_COOLDOWN = 0.5  # seconds
-        blank = Image.new("RGB", (LCD_W, LCD_H), (0, 0, 0))
-        while True:
+        # blank = Image.new("RGB", (LCD_W, LCD_H), (0, 0, 0))
+        # while True:
 
-            try:
-                ltr559.update_sensor()
-                prox = ltr559.get_proximity() or 0
-            except Exception:
-                prox = 0
+            # try:
+            #     ltr559.update_sensor()
+            #     prox = ltr559.get_proximity() or 0
+            # except Exception:
+            #     prox = 0
             
             #print (f"Proximity: {prox}") # Debug only
-            now = time.time()
-            if armed and prox > PROX_HIGH and (now - last_touch) > PROX_COOLDOWN:
-                touch_screen()
-                armed = False
-                last_touch = now
-            elif not armed and prox < PROX_LOW:
-                armed = True
+            # now = time.time()
+            # if armed and prox > PROX_HIGH and (now - last_touch) > PROX_COOLDOWN:
+            #     touch_screen()
+            #     armed = False
+            #     last_touch = now
+            # elif not armed and prox < PROX_LOW:
+            #     armed = True
 
 
-            try:
-                frame = lcd_queue.get(timeout=0.5)
-            except queue.Empty:
-                frame = None
+            # try:
+            #     frame = lcd_queue.get(timeout=0.5)
+            # except queue.Empty:
+            #     frame = None
 
-            if frame is None:
-                pil = blank.copy()
-            else:
-                pil = Image.fromarray(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
-            pil = ImageOps.fit(pil, (LCD_W, LCD_H), Image.BILINEAR)
-            draw = ImageDraw.Draw(pil)
+            # if frame is None:
+            #     pil = blank.copy()
+            # else:
+            #     pil = Image.fromarray(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
+            # pil = ImageOps.fit(pil, (LCD_W, LCD_H), Image.BILINEAR)
+            # draw = ImageDraw.Draw(pil)
             
-            with state_lock:
-                ip = state["ip"]
-                air_c = state["air_c"]
-                cpu_c = state["cpu_c"]
-                display_mode = state["display_mode"]
-                detections = state["detections"]
+            # with state_lock:
+            #     ip = state["ip"]
+            #     air_c = state["air_c"]
+            #     cpu_c = state["cpu_c"]
+            #     display_mode = state["display_mode"]
+            #     detections = state["detections"]
             
-            # Display based on mode
-            if display_mode == "ip":
-                draw.text((2, 2), f"IP: {ip}", font=font, fill=(255, 255, 255))
-                draw.text((2, 16), f"Mode: IP", font=font, fill=(0, 255, 0))
+            # # Display based on mode
+            # if display_mode == "ip":
+            #     draw.text((2, 2), f"IP: {ip}", font=font, fill=(255, 255, 255))
+            #     draw.text((2, 16), f"Mode: IP", font=font, fill=(0, 255, 0))
                 
-            elif display_mode == "targets":
-                draw.text((2, 2), f"TARGETS: {len(detections)}", font=font, fill=(255, 255, 0))
-                draw.text((2, 16), f"Mode: TARGETS", font=font, fill=(0, 255, 0))
-                # Show detection details
-                y_offset = 30
-                for i, det in enumerate(detections[:3]):  # Show max 3 detections
-                    label = det.get('label', 'Unknown')
-                    conf = det.get('confidence', 0)
-                    draw.text((2, y_offset), f"{label}: {conf:.1f}%", font=font, fill=(255, 255, 255))
-                    y_offset += 14
+            # elif display_mode == "targets":
+            #     draw.text((2, 2), f"TARGETS: {len(detections)}", font=font, fill=(255, 255, 0))
+            #     draw.text((2, 16), f"Mode: TARGETS", font=font, fill=(0, 255, 0))
+            #     # Show detection details
+            #     y_offset = 30
+            #     for i, det in enumerate(detections[:3]):  # Show max 3 detections
+            #         label = det.get('label', 'Unknown')
+            #         conf = det.get('confidence', 0)
+            #         draw.text((2, y_offset), f"{label}: {conf:.1f}%", font=font, fill=(255, 255, 255))
+            #         y_offset += 14
                     
-            elif display_mode == "temp":
-                draw.text((2, 2), f"Air: {air_c:.1f}C", font=font, fill=(255, 255, 255))
-                draw.text((2, 16), f"CPU: {cpu_c:.1f}C", font=font, fill=(255, 255, 255))
-                draw.text((2, 30), f"Mode: TEMP", font=font, fill=(0, 255, 0))
+            # elif display_mode == "temp":
+            #     draw.text((2, 2), f"Air: {air_c:.1f}C", font=font, fill=(255, 255, 255))
+            #     draw.text((2, 16), f"CPU: {cpu_c:.1f}C", font=font, fill=(255, 255, 255))
+            #     draw.text((2, 30), f"Mode: TEMP", font=font, fill=(0, 255, 0))
                 
                 
-            else:  # default mode
-                draw.rectangle((0,0,LCD_W,14), fill =(0,0,0))
-                draw.text((2, 2), f"IP:{ip}", font=font, fill=(255,255,255))
-                draw.rectangle((0,LCD_H-14,LCD_W,LCD_H), fill =(0,0,0))
-                draw.text((2, LCD_H-12), f"Air:{air_c:.1f}C CPU:{cpu_c:.1f}C", font=font, fill=(255,255,255))
+            # else:  # default mode
+            #     draw.rectangle((0,0,LCD_W,14), fill =(0,0,0))
+            #     draw.text((2, 2), f"IP:{ip}", font=font, fill=(255,255,255))
+            #     draw.rectangle((0,LCD_H-14,LCD_W,LCD_H), fill =(0,0,0))
+            #     draw.text((2, LCD_H-12), f"Air:{air_c:.1f}C CPU:{cpu_c:.1f}C", font=font, fill=(255,255,255))
             
-            lcd.display(pil)
+            # lcd.display(pil)
 # SocketIO connection management
 def socketio_connect():
     """Connect to SocketIO server with retry logic"""
@@ -359,9 +359,9 @@ def socketio_connect():
 
 # Start threads
 lcd_queue = queue.Queue(maxsize=3)
-threading.Thread(target=sensor_post_loop, daemon=True).start()
+# threading.Thread(target=sensor_post_loop, daemon=True).start()
 threading.Thread(target=display_loop, daemon=True).start()
-threading.Thread(target=_motor_worker, daemon=True).start()
+# threading.Thread(target=_motor_worker, daemon=True).start()
 threading.Thread(target=socketio_connect, daemon=True).start()
 
 
@@ -464,15 +464,15 @@ def rotate_servo(seconds: float, clockwise: bool = True) -> None:
     finally:
         servo.close()
 
-def _force_motor_stop():
-    """Force motor to stop completely - called on any error or completion"""
-    try:
-        servo = Servo(MOTOR_HEADER2_GPIO_PIN)
-        servo.mid()  # Neutral position
-        servo.close()  # Release GPIO
-        print("[motor] Force stop completed")
-    except Exception as e:
-        print(f"[motor] Force stop error: {e}")
+# def _force_motor_stop():
+#     """Force motor to stop completely - called on any error or completion"""
+#     try:
+#         servo = Servo(MOTOR_HEADER2_GPIO_PIN)
+#         servo.mid()  # Neutral position
+#         servo.close()  # Release GPIO
+#         print("[motor] Force stop completed")
+#     except Exception as e:
+#         print(f"[motor] Force stop error: {e}")
 
 def update_gauge(center, tip, tail):
 
@@ -765,7 +765,7 @@ while True:
                                             reading, angle = update_gauge(center, tip, tail)
                                             #print(f"Avg reading: {reading:.2f} bar (angle {angle:.1f}Â°)")
                                             details = {
-                                                "id": "guage",
+                                                "id": "gauge",
                                                 "reading_bar": round(reading, 2),
                                                 "confidence": round(det.confidence, 2),
                                                 "bbox": bbox.tolist()
@@ -775,14 +775,14 @@ while True:
                                             details_arr.append(details)
                                             det_arr.append("gauge")
 
-                                            if reading < 2.0 and motor_flag == 0:
-                                                # Simple gating: check flag and enqueue
-                                                try:
-                                                    motor_queue.put_nowait("gauge_correction")
-                                                    motor_flag = 1  # set flag to prevent continuous triggering
-                                                    print(f"[motor] Command enqueued - reading: {reading:.2f}")
-                                                except queue.Full:
-                                                    print("[motor] Command rejected - queue full")
+                                            # if reading < 2.0 and motor_flag == 0:
+                                            #     # Simple gating: check flag and enqueue
+                                            #     try:
+                                            #         motor_queue.put_nowait("gauge_correction")
+                                            #         motor_flag = 1  # set flag to prevent continuous triggering
+                                            #         print(f"[motor] Command enqueued - reading: {reading:.2f}")
+                                            #     except queue.Full:
+                                            #         print("[motor] Command rejected - queue full")
                                             #print(f"Gauge reading: {reading:.2f} bar (angle {angle:.1f}Â°)")
 
                                     #print(f"[Pose] ID={marker_id}, position={pose}")
