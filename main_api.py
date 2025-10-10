@@ -722,7 +722,7 @@ while True:
                             det_arr.append("aruco")
                             # send_detection("aruco", details, frame)
                         else:
-                            details.append(details)
+                            details_arr.append(details)
                             det_arr.append("livedata")
                     else:
                         # Send detections to server
@@ -786,7 +786,7 @@ while True:
                                             #print(f"Gauge reading: {reading:.2f} bar (angle {angle:.1f}Â°)")
 
                                     #print(f"[Pose] ID={marker_id}, position={pose}")
-                    send_detection(det_arr, details, frame)               
+                    send_detection(det_arr, details_arr, frame)               
                 if cv2.waitKey(1) == ord('q'):
                     break
     except Exception as e:
