@@ -533,6 +533,32 @@ def pose_estimation(frame, aruco_dict_type, matrix_coefficients, distortion_coef
 
     return frame, marker_id, pose
 
+# def send_detection(target_type, details, frame):
+#     # Encode frame as JPEG in memory, not saving to disk here.
+#     _, buffer = cv2.imencode(".jpg", frame)
+
+#     # Put image bytes in the "file" field
+#     files = {
+#         "file": ("frame.jpg", buffer.tobytes(), "image/jpeg")
+#     }
+
+#     data = {
+#         "ts": datetime.datetime.now().isoformat(),
+#         "target_type": target_type,
+#         "details": json.dumps(details)
+#     }
+#     try:
+#         resp = requests.post(
+#             SERVER_URL + "/api/targets",
+#             files=files,
+#             data=data,
+#             timeout=1
+#         )
+#         #print("Status:", resp.status_code)
+#         #print("Response:", resp.json())
+#     except Exception as e:
+#         print("POST failed::", e)
+
 def send_detection(target_type, details, frame):
     # Encode frame as JPEG in memory, not saving to disk here.
     _, buffer = cv2.imencode(".jpg", frame)
@@ -542,16 +568,19 @@ def send_detection(target_type, details, frame):
         "file": ("frame.jpg", buffer.tobytes(), "image/jpeg")
     }
 
-    data = {
-        "ts": datetime.datetime.now().isoformat(),
-        "target_type": target_type,
-        "details": json.dumps(details)
-    }
+    data_arr = []
+    for i in range(target_type.Length):
+        data = {
+            "ts": datetime.datetime.now().isoformat(),
+            "target_type": target_type[i],
+            "details": json.dumps(details[i])
+        }
+        data_arr.append(data)
     try:
         resp = requests.post(
             SERVER_URL + "/api/targets",
             files=files,
-            data=data,
+            data=data_arr,
             timeout=1
         )
         #print("Status:", resp.status_code)
@@ -641,6 +670,8 @@ while True:
                     counter += 1
                 
                 if frame is not None:
+                    det_arr = []
+                    details_arr = []
                     # Update detections in shared state for targets display mode
                     current_detections = []
                     for detection in detections:
@@ -674,7 +705,24 @@ while True:
                         detail= {
                             "id": "livedata",
                         }
-                        send_detection("livedata", detail, frame)
+
+                        # searches every frame
+                        output, marker_id, pose = pose_estimation(frame, aruco_dict_type, k, d)
+                        #displayFrame("rgb", output, detections)
+                        # if marker is seen send aruco, if not send live feed no det
+                        if marker_id is not None:
+                            details = {
+                                "id": marker_id,
+                                "pose": pose,
+                                "confidence": round(det.confidence, 2),
+                                "bbox": bbox.tolist()
+                            }
+                            details_arr.append(details)
+                            det_arr.append(("aruco", details, frame))
+                            # send_detection("aruco", details, frame)
+                        else:
+                            details.append(details)
+                            det_arr.append(("livedata", details, frame))
                     else:
                         # Send detections to server
                         for det in detections:
@@ -689,7 +737,9 @@ while True:
                                     "confidence": round(det.confidence, 2),
                                     "bbox": bbox.tolist()
                                 }
-                                send_detection("valve", details, frame)
+                                # send_detection("valve", details, frame)
+                                details_arr.append(details)
+                                det_arr.append(("valve", details, frame))
                             elif label == "Gauge":
                                 for det in detections:
                                     #displayFrame("rgb", output, detections)
@@ -720,7 +770,9 @@ while True:
                                                 "bbox": bbox.tolist()
                                             }
                                             
-                                            send_detection("gauge", details, frame)
+                                            # send_detection("gauge", details, frame)
+                                            details_arr.append(details)
+                                            det_arr.append(("gauge", details, frame))
 
                                             if reading < 2.0 and motor_flag == 0:
                                                 # Simple gating: check flag and enqueue
@@ -732,18 +784,8 @@ while True:
                                                     print("[motor] Command rejected - queue full")
                                             #print(f"Gauge reading: {reading:.2f} bar (angle {angle:.1f}Â°)")
 
-                            elif label == "ARUCO":
-                                output, marker_id, pose = pose_estimation(frame, aruco_dict_type, k, d)
-                                #displayFrame("rgb", output, detections)
-                                if marker_id is not None:
-                                    details = {
-                                        "id": marker_id,
-                                        "pose": pose,
-                                        "confidence": round(det.confidence, 2),
-                                        "bbox": bbox.tolist()
-                                    }
-                                    send_detection("aruco", details, frame)
                                     #print(f"[Pose] ID={marker_id}, position={pose}")
+                    send_detection(det_arr, details, frame)               
                 if cv2.waitKey(1) == ord('q'):
                     break
     except Exception as e:
