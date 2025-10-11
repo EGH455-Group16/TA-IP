@@ -639,6 +639,8 @@ while True:
                     counter += 1
 
                 if frame is not None:
+                    points = {"Center": (0, 0), "Tip": (0, 0), "Tail": (0, 0)}
+                    boxes  = {"Center": None, "Tip": None, "Tail": None}
                     combined_detections = []
                     aruco_details = None
                     # Update detections in shared state for targets display mode
@@ -695,36 +697,38 @@ while True:
                                     #displayFrame("rgb", output, detections)
                                     bbox = frameNorm(frame, (det.xmin, det.ymin, det.xmax, det.ymax))
                                     label = labels[det.label]
-                                    if label in ["Center", "Tip", "Tail"]:
-                                        points[label] = bbox_center(bbox.tolist())
+                                    cls = labels[det.label]
+                                    if cls in ("Center", "Tail"):
+                                        boxes[cls]  = bbox                 # keep full bbox
+                                        points[cls] = bbox_center(bbox)    # keep centre for convenience
+
+                                    elif cls == "Tip":
+                                        boxes["Tip"] = bbox   
                                     
-                                    if labels != "Gauge":
-                                        if (points["Center"] != (0,0) and
-                                            points["Tip"] != (0,0) and
-                                            points["Tail"] != (0,0)):
+                            if all(boxes[k] is not None for k in ("Center", "Tip", "Tail")):
+                                center = bbox_center(boxes["Center"])
+                                tip_pt = bbox_center(boxes["Tip"])
+                                tail   = bbox_center(boxes["Tail"])
 
-                                            center = points["Center"]
-                                            tip = points["Tip"]
-                                            tail = points["Tail"]
+                                # Visualisation (optional)
+                                cv2.circle(frame, (int(center[0]), int(center[1])), 4, (0,255,0), -1)
+                                cv2.circle(frame, (int(tip_pt[0]), int(tip_pt[1])), 4, (0,0,255), -1)
+                                cv2.line(frame, (int(center[0]), int(center[1])), (int(tip_pt[0]), int(tip_pt[1])), (255,0,0), 2)
                                             
-                                            # reading, angle = gauge_reading(center, tip,
-                                            #     min_val=0, max_val=10, 
-                                            #     theta_min=270, theta_max=0
-                                            # )
-                                            reading, angle = update_gauge(center, tip, tail)
-                                            combined_detections.append({
-                                            "target_type": "gauge",
-                                            "confidence": round(det.confidence, 2),
-                                            "details": {"reading_bar": round(reading, 2), "angle_deg": round(angle, 1)}
-                                            })
+                                reading, angle = update_gauge(center, tip_pt, tail)
+                                combined_detections.append({
+                                "target_type": "gauge",
+                                "confidence": round(det.confidence, 2),
+                                "details": {"reading_bar": round(reading, 2), "angle_deg": round(angle, 1)}
+                                })
 
-                                            if reading < 2.0 and motor_flag == 0:
-                                                try:
-                                                    motor_queue.put_nowait("gauge_correction")
-                                                    motor_flag = 1
-                                                    print(f"[motor] Command enqueued - reading: {reading:.2f}")
-                                                except queue.Full:
-                                                    print("[motor] Command rejected - queue full")
+                                if reading < 2.0 and motor_flag == 0:
+                                    try:
+                                        motor_queue.put_nowait("gauge_correction")
+                                        motor_flag = 1
+                                        print(f"[motor] Command enqueued - reading: {reading:.2f}")
+                                    except queue.Full:
+                                        print("[motor] Command rejected - queue full")
 
                     # ---- Combine detections if both present ----
                     if aruco_details and combined_detections:
