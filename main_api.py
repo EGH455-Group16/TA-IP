@@ -20,7 +20,7 @@ from utils import ARUCO_DICT
 import math
 import socket
 import requests
-# from collections import deque
+from collections import deque
 # from gpiozero import Servo
 from time import sleep
 import threading,queue
@@ -34,8 +34,8 @@ from PIL import Image, ImageDraw, ImageFont, ImageOps
 import socketio
 
 # -------------------- Global Variables --------------------
-SERVER_URL = "http://10.88.42.96:5000" # replace
-SOCKETIO_URL = "http://10.88.42.96:5000"  # SocketIO server URL
+SERVER_URL = "http://192.168.1.237:5000" # replace
+SOCKETIO_URL = "http://192.168.1.237:5000"  # SocketIO server URL
 DEVICE_ID = "pi_device_001"  # Unique device identifier
 
 
@@ -517,6 +517,7 @@ def pose_estimation(frame, aruco_dict_type, matrix_coefficients, distortion_coef
 
     marker_id = None
     pose = None
+    rotation = None
 
     if ids is not None and len(corners) > 0:
         # take the first (and only expected) marker
@@ -528,38 +529,13 @@ def pose_estimation(frame, aruco_dict_type, matrix_coefficients, distortion_coef
 
         marker_id = int(ids[0][0])  # ensure plain int, not numpy type
         pose = tvec.flatten().tolist()
+        rotation = rvec.flatten().tolist()
 
         #print(f"[Pose] ID={marker_id}, rvec={pose['rvec']}, tvec={pose['tvec']}")
 
-    return frame, marker_id, pose
+    return frame, marker_id, pose, rotation
 
-# def send_detection(target_type, details, frame):
-#     # Encode frame as JPEG in memory, not saving to disk here.
-#     _, buffer = cv2.imencode(".jpg", frame)
-
-#     # Put image bytes in the "file" field
-#     files = {
-#         "file": ("frame.jpg", buffer.tobytes(), "image/jpeg")
-#     }
-
-#     data = {
-#         "ts": datetime.datetime.now().isoformat(),
-#         "target_type": target_type,
-#         "details": json.dumps(details)
-#     }
-#     try:
-#         resp = requests.post(
-#             SERVER_URL + "/api/targets",
-#             files=files,
-#             data=data,
-#             timeout=1
-#         )
-#         #print("Status:", resp.status_code)
-#         #print("Response:", resp.json())
-#     except Exception as e:
-#         print("POST failed::", e)
-
-def send_detection(target_type, details, frame):
+def send_detection(detections, frame):
     # Encode frame as JPEG in memory, not saving to disk here.
     _, buffer = cv2.imencode(".jpg", frame)
 
@@ -568,20 +544,15 @@ def send_detection(target_type, details, frame):
         "file": ("frame.jpg", buffer.tobytes(), "image/jpeg")
     }
 
-    data_arr = []
-    # foreach detected target, loop through and attach the target type and details to array to send
-    for i in range(target_type.Length):
-        data = {
-            "ts": datetime.datetime.now().isoformat(),
-            "target_type": target_type[i],
-            "details": json.dumps(details[i])
-        }
-        data_arr.append(data)
+    data = {
+        "ts": datetime.datetime.now().isoformat(),
+        "details": json.dumps(detections)
+    }
     try:
         resp = requests.post(
             SERVER_URL + "/api/targets",
             files=files,
-            data=data_arr,
+            data=data,
             timeout=1
         )
         #print("Status:", resp.status_code)
@@ -629,18 +600,14 @@ points = {"Center": (0,0), "Tip": (0,0), "Tail": (0,0)}
 while True:
     try:
         with dai.Device(pipeline) as device:
-
-            # Output queues will be used to get the rgb frames and nn data from the outputs defined above
             qRgb = device.getOutputQueue(name="rgb", maxSize=4, blocking=False)
             qDet = device.getOutputQueue(name="nn", maxSize=4, blocking=False)
 
             frame = None
-            detections = []
             startTime = time.monotonic()
             counter = 0
             color2 = (255, 255, 255)
 
-            # nn data, being the bounding box locations, are in <0..1> range - they need to be normalized with frame width/height
             def frameNorm(frame, bbox):
                 normVals = np.full(len(bbox), frame.shape[0])
                 normVals[::2] = frame.shape[1]
@@ -650,10 +617,11 @@ while True:
                 color = (255, 0, 0)
                 for detection in detections:
                     bbox = frameNorm(frame, (detection.xmin, detection.ymin, detection.xmax, detection.ymax))
-                    cv2.putText(frame, labels[detection.label], (bbox[0] + 10, bbox[1] + 20), cv2.FONT_HERSHEY_TRIPLEX, 0.5, 255)
-                    cv2.putText(frame, f"{int(detection.confidence * 100)}%", (bbox[0] + 10, bbox[1] + 40), cv2.FONT_HERSHEY_TRIPLEX, 0.5, 255)
+                    cv2.putText(frame, labels[detection.label], (bbox[0] + 10, bbox[1] + 20),
+                                cv2.FONT_HERSHEY_TRIPLEX, 0.5, 255)
+                    cv2.putText(frame, f"{int(detection.confidence * 100)}%",
+                                (bbox[0] + 10, bbox[1] + 40), cv2.FONT_HERSHEY_TRIPLEX, 0.5, 255)
                     cv2.rectangle(frame, (bbox[0], bbox[1]), (bbox[2], bbox[3]), color, 2)
-                # Show the frame
                 cv2.imshow(name, frame)
 
             while True:
@@ -669,10 +637,10 @@ while True:
                 if inDet is not None:
                     detections = inDet.detections
                     counter += 1
-                
+
                 if frame is not None:
-                    det_arr = []
-                    details_arr = []
+                    combined_detections = []
+                    aruco_details = None
                     # Update detections in shared state for targets display mode
                     current_detections = []
                     for detection in detections:
@@ -698,51 +666,32 @@ while True:
                         lcd_queue.put_nowait(frame.copy())
                     except queue.Full:
                         pass
-                    
-                    # Draw bboxes for human operator
-                    
-                    displayFrame("rgb", frame, detections)
-                    if not detections:
-                        detail= {
-                            "id": "livedata",
+
+                    # ---- Run ArUco detection ----
+                    output, marker_id, pose, rotation = pose_estimation(frame, aruco_dict_type, k, d)
+                    if marker_id is not None:
+                        aruco_details = {
+                            "target_type": "aruco",
+                            "details": {
+                                "id": int(marker_id),
+                                "pose": pose,
+                                "rotation": rotation}
                         }
 
-                        # searches every frame
-                        output, marker_id, pose = pose_estimation(frame, aruco_dict_type, k, d)
-                        #displayFrame("rgb", output, detections)
-                        # if marker is seen send aruco, if not send live feed no det
-                        if marker_id is not None:
-                            details = {
-                                "id": marker_id,
-                                "pose": pose,
-                                "confidence": round(det.confidence, 2),
-                                "bbox": bbox.tolist()
-                            }
-                            details_arr.append(details)
-                            det_arr.append("aruco")
-                            # send_detection("aruco", details, frame)
-                        else:
-                            details_arr.append(details)
-                            det_arr.append("livedata")
-                    else:
-                        # Send detections to server
-                        for det in detections:
-                            bbox = frameNorm(frame, (det.xmin, det.ymin, det.xmax, det.ymax))
-                            label = labels[det.label]
-                            
-                            if label in ["open-valve", "closed-valve"]:
-                                #displayFrame("rgb", output, detections)
+                    # ---- Neural detections ----
+                    for det in detections:
+                        bbox = frameNorm(frame, (det.xmin, det.ymin, det.xmax, det.ymax))
+                        label = labels[det.label]
 
-                                details = {
-                                    "state": "open" if "open" in label else "closed",
-                                    "confidence": round(det.confidence, 2),
-                                    "bbox": bbox.tolist()
-                                }
-                                # send_detection("valve", details, frame)
-                                details_arr.append(details)
-                                det_arr.append("valve")
-                            elif label == "Gauge":
-                                for det in detections:
+                        if label in ["open-valve", "closed-valve"]:
+                            combined_detections.append({
+                                "target_type": "valve",
+                                "confidence": round(det.confidence, 2),
+                                "details": {"state": "open" if "open" in label else "closed"}
+                            })
+
+                        elif label == "Gauge":
+                            for det in detections:
                                     #displayFrame("rgb", output, detections)
                                     bbox = frameNorm(frame, (det.xmin, det.ymin, det.xmax, det.ymax))
                                     label = labels[det.label]
@@ -763,41 +712,38 @@ while True:
                                             #     theta_min=270, theta_max=0
                                             # )
                                             reading, angle = update_gauge(center, tip, tail)
-                                            #print(f"Avg reading: {reading:.2f} bar (angle {angle:.1f}Â°)")
-                                            details = {
-                                                "id": "gauge",
-                                                "reading_bar": round(reading, 2),
-                                                "confidence": round(det.confidence, 2),
-                                                "bbox": bbox.tolist()
-                                            }
-                                            
-                                            # send_detection("gauge", details, frame)
-                                            details_arr.append(details)
-                                            det_arr.append("gauge")
+                                            combined_detections.append({
+                                            "target_type": "gauge",
+                                            "confidence": round(det.confidence, 2),
+                                            "details": {"reading_bar": round(reading, 2), "angle_deg": round(angle, 1)}
+                                            })
 
-                                            # if reading < 2.0 and motor_flag == 0:
-                                            #     # Simple gating: check flag and enqueue
-                                            #     try:
-                                            #         motor_queue.put_nowait("gauge_correction")
-                                            #         motor_flag = 1  # set flag to prevent continuous triggering
-                                            #         print(f"[motor] Command enqueued - reading: {reading:.2f}")
-                                            #     except queue.Full:
-                                            #         print("[motor] Command rejected - queue full")
-                                            #print(f"Gauge reading: {reading:.2f} bar (angle {angle:.1f}Â°)")
+                                            if reading < 2.0 and motor_flag == 0:
+                                                try:
+                                                    motor_queue.put_nowait("gauge_correction")
+                                                    motor_flag = 1
+                                                    print(f"[motor] Command enqueued - reading: {reading:.2f}")
+                                                except queue.Full:
+                                                    print("[motor] Command rejected - queue full")
 
-                                    #print(f"[Pose] ID={marker_id}, position={pose}")
-                    send_detection(det_arr, details_arr, frame)               
+                    # ---- Combine detections if both present ----
+                    if aruco_details and combined_detections:
+                        combined_detections.append(aruco_details)
+                        send_detection(combined_detections, frame)
+
+                    # ---- Send single detections if only one exists ----
+                    elif combined_detections:
+                        send_detection(combined_detections, frame)
+                    elif aruco_details:
+                        send_detection([aruco_details], frame)
+                    else:
+                        send_detection([{"target_type": "livedata", "details": {"id": "livedata"}}], frame)
+
+                    displayFrame("rgb", frame, detections)
+
                 if cv2.waitKey(1) == ord('q'):
                     break
+
     except Exception as e:
         print("Detection processing error:", e)
-        # Just wait a second
         time.sleep(1.0)
-        # Continue - device will be reconnected in the next loop
-                        
-                        
-
-                        
-
-
-        
