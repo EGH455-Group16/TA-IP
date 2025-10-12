@@ -289,7 +289,7 @@ def display_loop():
             except Exception:
                 prox = 0
             
-            print (f"Proximity: {prox}") # Debug only
+            # print (f"Proximity: {prox}") # Debug only
             now = time.time()
             if armed and prox > PROX_HIGH and (now - last_touch) > PROX_COOLDOWN:
                 touch_screen()
