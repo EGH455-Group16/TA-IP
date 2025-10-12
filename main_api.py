@@ -744,7 +744,7 @@ while True:
                     else:
                         send_detection([{"target_type": "livedata", "details": {"id": "livedata"}}], frame)
 
-                    displayFrame("rgb", frame, detections)
+                    # displayFrame("rgb", frame, detections)
 
                 if cv2.waitKey(1) == ord('q'):
                     break
